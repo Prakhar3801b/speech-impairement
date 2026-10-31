@@ -1,0 +1,839 @@
+<title>Saathi Voice Assistant</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
+<style>
+/* Layout: a working console. Header strip, tabbed views; conversation view is partner (left) / patient signals (right), then ranked candidates + transcript. */
+:root {
+  --bg: #EDF1EF; --surface: #FFFFFF; --sunk: #E3E9E6; --ink: #13201E; --muted: #55655F; --line: #D0DAD6;
+  --teal: #0E6B62; --teal-soft: #DCEEEA; --marigold: #B87400; --marigold-soft: #FBEBC8;
+  --danger: #B3261E; --danger-soft: #F9DEDC; --on-accent: #FFFFFF;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Atkinson Hyperlegible", "Noto Sans Devanagari", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0E1615; --surface: #16211F; --sunk: #111a19; --ink: #E4EDEA; --muted: #93A6A1; --line: #2A3936;
+  --teal: #5CC2B5; --teal-soft: #15322E; --marigold: #F2B33D; --marigold-soft: #3A2D10;
+  --danger: #F2867E; --danger-soft: #3E1A18; --on-accent: #0E1615; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0E1615; --surface: #16211F; --sunk: #111a19; --ink: #E4EDEA; --muted: #93A6A1; --line: #2A3936;
+  --teal: #5CC2B5; --teal-soft: #15322E; --marigold: #F2B33D; --marigold-soft: #3A2D10;
+  --danger: #F2867E; --danger-soft: #3E1A18; --on-accent: #0E1615; color-scheme: dark }
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 48px; }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px }
+h1 { font: 800 clamp(26px, 4vw, 38px)/1.05 var(--f-display); letter-spacing: -0.02em; margin: 0; text-wrap: balance }
+h1 span { color: var(--marigold) }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 62ch }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 600 12px/1 var(--f-mono); letter-spacing: .04em; text-transform: uppercase;
+  padding: 7px 10px; border-radius: 999px; background: var(--marigold-soft); color: var(--ink); border: 1px solid var(--line) }
+.pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--marigold) }
+nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto }
+nav.tabs button { font: 600 14px var(--f-body); background: none; border: 0; color: var(--muted); padding: 10px 14px; cursor: pointer;
+  border-bottom: 3px solid transparent; white-space: nowrap }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--marigold) }
+button:focus-visible, input:focus-visible, select:focus-visible, .cand:focus-visible { outline: 3px solid var(--teal); outline-offset: 2px }
+.grid2 { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px }
+@media (max-width: 860px) { .grid2 { grid-template-columns: minmax(0, 1fr) } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 12px; align-content: start; min-width: 0 }
+.panel h2 { font: 700 18px/1.2 var(--f-display); margin: 0; display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap }
+.who { font: 600 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+label.lab { font: 600 12px var(--f-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px }
+.hint { font-size: 13px; color: var(--muted); margin: 0 }
+input[type=text], select { width: 100%; font: 16px var(--f-body); padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--sunk); color: var(--ink) }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.row > input[type=text] { flex: 1 1 200px; width: auto }
+.btn { font: 700 14px var(--f-body); padding: 9px 14px; border-radius: 8px; border: 1px solid var(--teal); background: var(--teal); color: var(--on-accent); cursor: pointer }
+.btn.ghost { background: transparent; color: var(--teal) }
+.btn.small { padding: 5px 10px; font-size: 13px }
+.btn:disabled { opacity: .5; cursor: default }
+.chips { display: flex; gap: 6px; flex-wrap: wrap }
+.chip { font: 13px var(--f-body); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--sunk); color: var(--ink); cursor: pointer }
+.chip:hover { border-color: var(--teal) }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex-wrap: wrap }
+.seg button { font: 13px var(--f-body); border: 0; background: var(--sunk); color: var(--ink); padding: 6px 10px; cursor: pointer; border-right: 1px solid var(--line) }
+.seg button:last-child { border-right: 0 }
+.seg button[aria-pressed="true"] { background: var(--teal); color: var(--on-accent) }
+.signal { display: grid; gap: 6px; padding-top: 10px; border-top: 1px dashed var(--line) }
+.signal:first-of-type { border-top: 0; padding-top: 0 }
+.sigrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px }
+.keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px }
+.keys button { font: 600 14px var(--f-mono); padding: 6px 0; border-radius: 6px; border: 1px solid var(--line); background: var(--sunk); color: var(--ink); cursor: pointer }
+.keys button.ctl { grid-column: span 2; font-size: 11px }
+.spelled { font: 600 20px var(--f-mono); letter-spacing: .15em; min-height: 30px; padding: 2px 8px; border-radius: 6px; background: var(--sunk); border: 1px solid var(--line) }
+.match { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 14px }
+canvas.mini { width: 160px; height: 48px; border-radius: 6px; border: 1px solid var(--line); background: #08131a; max-width: 100% }
+.cands { display: grid; gap: 8px }
+.cand { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center; text-align: left; width: 100%;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; cursor: pointer; color: var(--ink); font: inherit }
+.cand:hover { border-color: var(--teal) }
+.cand.top { border-color: var(--marigold); box-shadow: 0 0 0 1px var(--marigold) inset }
+.cand .k { font: 700 16px var(--f-mono); width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: var(--sunk) }
+.cand.top .k { background: var(--marigold); color: var(--on-accent) }
+.cand .t { font: 700 18px/1.3 var(--f-body); overflow-wrap: anywhere }
+.cand .src { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px }
+.tag { font: 600 11px var(--f-mono); padding: 2px 6px; border-radius: 4px; background: var(--teal-soft); color: var(--ink); letter-spacing: .02em }
+.tag.warn { background: var(--danger-soft) }
+.tag.claude { background: var(--marigold-soft) }
+.conf { font: 600 13px var(--f-mono); text-align: right; min-width: 52px; font-variant-numeric: tabular-nums }
+.bar { height: 5px; border-radius: 3px; background: var(--sunk); margin-top: 4px; overflow: hidden }
+.bar b { display: block; height: 100% ; background: var(--teal) }
+.empty { padding: 16px; border: 1px dashed var(--line); border-radius: var(--r); color: var(--muted); font-size: 14px }
+.chat { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 340px; overflow-y: auto }
+.chat li { padding: 8px 12px; border-radius: 10px; max-width: 85%; overflow-wrap: anywhere }
+.chat li.partner { background: var(--sunk); justify-self: start }
+.chat li.patient { background: var(--teal-soft); justify-self: end }
+.chat li small { display: block; font: 11px var(--f-mono); color: var(--muted) }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px }
+.stat { background: var(--sunk); border-radius: 8px; padding: 10px 12px }
+.stat b { display: block; font: 700 20px var(--f-mono); font-variant-numeric: tabular-nums }
+.stat span { font-size: 12px; color: var(--muted) }
+.lat { font: 12px var(--f-mono); color: var(--muted) }
+.banner { background: var(--danger-soft); border: 1px solid var(--danger); border-radius: var(--r); padding: 10px 14px; font-weight: 700 }
+.tablewrap { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap }
+th:first-child, td:first-child { text-align: left }
+th { font: 600 11px var(--f-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted) }
+tr.best td { font-weight: 700 }
+.spec { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px }
+.spec figure { margin: 0; display: grid; gap: 6px; min-width: 0 }
+.spec canvas { width: 100%; height: 130px; border-radius: 8px; border: 1px solid var(--line); background: #08131a }
+figcaption { font-size: 13px; color: var(--muted) }
+.tmpl { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px }
+.tmpl > div { background: var(--sunk); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; font-size: 14px; min-width: 0 }
+.tmpl canvas { width: 100%; height: 40px; border-radius: 4px; background: #08131a }
+.prose { max-width: 70ch; display: grid; gap: 10px }
+.prose p, .prose li { margin: 0 }
+.prose ul { margin: 0; padding-left: 20px; display: grid; gap: 6px }
+code { font: 13px var(--f-mono); background: var(--sunk); padding: 1px 5px; border-radius: 4px }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg);
+  padding: 10px 16px; border-radius: 8px; font-size: 14px; max-width: calc(100% - 32px); z-index: 20 }
+@media (prefers-reduced-motion: no-preference) { .cand { transition: border-color .15s } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Saathi <span>Voice Assistant</span></h1>
+      <p class="lede">Helps a person with a speech impairment hold a conversation. It combines unclear speech, a match of their voice's spectrogram, Indian Sign Language fingerspelling and face cues to suggest messages. When the patient confirms one, it's read aloud.</p>
+    </div>
+    <span class="pill"><i></i>Browser demo · simulated inputs</span>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-converse" aria-selected="true" data-view="converse">Conversation</button>
+    <button role="tab" id="tab-spectro" aria-selected="false" data-view="spectro">Spectrogram matcher</button>
+    <button role="tab" id="tab-results" aria-selected="false" data-view="results">Evaluation &amp; scope</button>
+  </nav>
+
+  <!-- ============ CONVERSATION ============ -->
+  <section id="view-converse" class="wrap" style="gap:18px">
+    <div class="grid2">
+      <div class="panel">
+        <h2>Partner says <span class="who">caregiver · doctor</span></h2>
+        <form id="partnerForm" class="row">
+          <input type="text" id="partnerText" autocomplete="off" placeholder="Type what the partner says" aria-label="Partner's words">
+          <button class="btn" type="submit">Send</button>
+        </form>
+        <div class="chips" id="partnerExamples"></div>
+        <div>
+          <label class="lab">Quick replies (one tap to speak)</label>
+          <div class="cands" id="suggestions"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Patient signals <span class="who">stand-ins for mic &amp; camera</span></h2>
+
+        <div class="signal">
+          <label class="lab" for="asrText">Speech-to-text heard (Scribe output, simulated)</label>
+          <input type="text" id="asrText" autocomplete="off" placeholder="e.g. ai wan waa">
+          <div class="chips" id="asrExamples"></div>
+        </div>
+
+        <div class="signal">
+          <label class="lab" for="sayPhrase">Spectrogram match against the patient's own recordings</label>
+          <div class="row">
+            <select id="sayPhrase" style="flex:1 1 200px;width:auto"></select>
+            <button class="btn ghost small" id="sayBtn" type="button">Say it slurred</button>
+            <button class="btn ghost small" id="sayClear" type="button">Clear</button>
+          </div>
+          <div class="match" id="sayResult"><span class="hint">No recording yet. Say it slurred makes a slower, mumbled synthetic recording and matches it with DTW.</span></div>
+        </div>
+
+        <div class="signal">
+          <label class="lab">ISL fingerspelling (letters the camera would recognise)</label>
+          <div class="row"><div class="spelled" id="spelled" style="flex:1 1 120px" aria-live="polite"></div></div>
+          <div class="keys" id="keys"></div>
+          <div class="row"><span class="lab" style="margin:0">Phrase signs</span><div class="chips" id="signChips"></div></div>
+        </div>
+
+        <div class="signal">
+          <div class="sigrow">
+            <div><label class="lab">Head</label><div class="seg" data-cue="head"><button data-v="">none</button><button data-v="nod">nod</button><button data-v="shake">shake</button></div></div>
+            <div><label class="lab">Thumbs</label><div class="seg" data-cue="thumbs"><button data-v="">none</button><button data-v="up">up</button><button data-v="down">down</button></div></div>
+            <div><label class="lab">Face</label><div class="seg" data-cue="expression"><button data-v="">neutral</button><button data-v="smile">smile</button><button data-v="pain">pain</button><button data-v="frown">frown</button></div></div>
+            <div><label class="lab">Language</label><div class="seg" data-cue="language"><button data-v="auto">auto</button><button data-v="eng">eng</button><button data-v="hin">hin</button></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Suggested messages <span class="row" style="gap:8px"><span class="lat" id="latency"></span><button class="btn ghost small" id="claudeBtn" type="button" hidden>Re-rank with Claude</button><button class="btn ghost small" id="resetBtn" type="button">Clear signals</button></span></h2>
+      <div id="emergency" class="banner" hidden>Emergency sign detected: confirm to speak immediately.</div>
+      <div class="cands" id="candidates"></div>
+      <p class="hint">To speak a message, click it or press <code>1</code>–<code>3</code>. <code>Enter</code> speaks the top one. This demo reads it with your browser's voice; the full app uses an ElevenLabs voice, cloned only with recorded consent.</p>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>Transcript</h2>
+        <ul class="chat" id="chat"></ul>
+      </div>
+      <div class="panel">
+        <h2>Effort &amp; speed <span class="who">this session</span></h2>
+        <div class="stats">
+          <div class="stat"><b id="sTurns">0</b><span>messages spoken</span></div>
+          <div class="stat"><b id="sTop1">–</b><span>picked the top suggestion</span></div>
+          <div class="stat"><b id="sActs">–</b><span>avg taps/keys to confirm</span></div>
+          <div class="stat"><b id="sRank">–</b><span>avg ranking time</span></div>
+        </div>
+        <p class="hint">The problem statement targets under 2 s from the end of speech to audio. Ranking here runs on your device. In the full app, speech-to-text is the slowest step (about 300–700 ms).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SPECTROGRAM ============ -->
+  <section id="view-spectro" class="wrap" hidden style="gap:18px">
+    <div class="panel">
+      <h2>Spectrogram matcher</h2>
+      <p class="hint" style="max-width:75ch">Each recording goes through these steps: 16 kHz audio → 25 ms Hamming frames every 10 ms → 512-point FFT → 40-band mel filterbank → log → 13 MFCCs plus their deltas → per-recording normalisation. Dynamic time warping then compares it with the patient's own enrolled recordings, which absorbs slow, uneven dysarthric timing. The enrolled recordings below are synthetic voices made in your browser. Their vowels drift toward a neutral "uh" sound, the way they do in dysarthria.</p>
+      <div class="row">
+        <select id="testPhrase" style="flex:1 1 220px;width:auto" aria-label="Phrase to test"></select>
+        <button class="btn" id="testBtn" type="button">Make a test recording &amp; match</button>
+        <button class="btn ghost" id="playBtn" type="button" disabled>Play it</button>
+      </div>
+      <div class="sigrow">
+        <div><label class="lab" for="rate">Slowness <span id="rateV"></span></label><input type="range" id="rate" min="1" max="2" step="0.05" value="1.45" style="width:100%"></div>
+        <div><label class="lab" for="slur">Vowel blur <span id="slurV"></span></label><input type="range" id="slur" min="0" max="0.6" step="0.05" value="0.3" style="width:100%"></div>
+        <div><label class="lab" for="snr">Noise, SNR <span id="snrV"></span></label><input type="range" id="snr" min="0" max="35" step="1" value="14" style="width:100%"></div>
+      </div>
+      <div class="spec">
+        <figure><canvas id="qCanvas" width="480" height="130"></canvas><figcaption id="qCap">Test recording (log-mel spectrogram)</figcaption></figure>
+        <figure><canvas id="tCanvas" width="480" height="130"></canvas><figcaption id="tCap">Best matching enrolled recording</figcaption></figure>
+      </div>
+      <div class="tablewrap"><table id="matchTable"><thead><tr><th>Phrase</th><th>DTW distance</th><th>Confidence</th></tr></thead><tbody></tbody></table></div>
+      <p class="lat" id="specLat"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Enrolled recordings <span class="who" id="tmplCount"></span></h2>
+      <p class="hint">Add your own recording as an audio file (WAV, MP3 or M4A, 1–3 s). This page can't use your microphone. Enrolled files stay in this tab and are never uploaded.</p>
+      <div class="row">
+        <select id="upPhrase" style="flex:1 1 200px;width:auto" aria-label="Phrase for uploaded recording"></select>
+        <label class="btn ghost small" for="upEnroll" style="cursor:pointer">Enroll a file…</label>
+        <input type="file" id="upEnroll" accept="audio/*" hidden>
+        <label class="btn ghost small" for="upTest" style="cursor:pointer">Test a file…</label>
+        <input type="file" id="upTest" accept="audio/*" hidden>
+      </div>
+      <div class="tmpl" id="tmplList"></div>
+    </div>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section id="view-results" class="wrap" hidden style="gap:18px">
+    <div class="panel">
+      <h2>Fusion ablation <span class="pill"><i></i>Simulated data</span></h2>
+      <p class="hint">270 simulated turns: 30 dialogues × 3 severities × 3 seeds. Each row adds one signal to the one above. The "heard" text, cues, spelling and spectrogram scores are all synthetic, generated by <code>eval/run_eval.py</code> in the prototype repo. These are not patient recordings.</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Condition</th><th>WER</th><th>CER</th><th>Intent top-1</th><th>Top-3</th><th>WER mild</th><th>WER moderate</th><th>WER severe</th></tr></thead>
+        <tbody>
+          <tr><td>Speech-to-text only (no fusion)</td><td>0.580</td><td>0.293</td><td>15.2%</td><td>15.2%</td><td>0.316</td><td>0.579</td><td>0.846</td></tr>
+          <tr><td>+ conversation context</td><td>0.403</td><td>0.358</td><td>64.8%</td><td>90.0%</td><td>0.396</td><td>0.343</td><td>0.469</td></tr>
+          <tr><td>+ face, head &amp; lip cues</td><td>0.276</td><td>0.251</td><td>74.4%</td><td>94.1%</td><td>0.242</td><td>0.271</td><td>0.315</td></tr>
+          <tr><td>+ spectrogram templates</td><td>0.020</td><td>0.017</td><td>97.4%</td><td>99.6%</td><td>0.000</td><td>0.017</td><td>0.044</td></tr>
+          <tr class="best"><td>+ ISL spelling (everything)</td><td>0.014</td><td>0.012</td><td>98.1%</td><td>99.6%</td><td>0.000</td><td>0.008</td><td>0.034</td></tr>
+        </tbody>
+      </table></div>
+      <p class="hint">One known weakness: on mild speech, context alone raises WER from 0.316 to 0.396. Its weight still needs tuning.</p>
+    </div>
+    <div class="grid2">
+      <div class="panel prose">
+        <h2>What runs on this page</h2>
+        <ul>
+          <li>The full fusion ranker, ported from the prototype's Python backend. Emergency signs and a nod or shake to a yes/no question take a fast path; everything else goes through a weighted scorer over a 33-phrase English, Hindi and Hinglish phrasebook.</li>
+          <li>The spectrogram pipeline (FFT, mel filterbank, MFCCs, DTW), written in plain JavaScript.</li>
+          <li>Reply suggestions that appear as soon as the partner speaks, a one-tap confirm, and effort tracking.</li>
+          <li>Optional re-ranking by Claude, if you allow it. Without it the heuristic works fully offline.</li>
+        </ul>
+      </div>
+      <div class="panel prose">
+        <h2>Only in the full app</h2>
+        <ul>
+          <li>Live microphone and camera. This page has no device access, so the controls above stand in for them.</li>
+          <li>ElevenLabs Scribe speech-to-text and ElevenLabs voices: designed, or cloned after the consent form is signed. Revoking consent deletes the voice and its cached audio.</li>
+          <li>MediaPipe hand and face landmarks, an ISL letter classifier (k-NN on 254 features) and nod/shake detection.</li>
+          <li>The SQLite store for the speech and audio caches, phrasebook, enrolled recordings, sign samples, consent records and audit log.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+/* ===================================================== phrasebook */
+const RAW = [
+ ["Yes","en","answer",["yeah","yes please","haan","हाँ","ha"],[]],
+ ["No","en","answer",["nope","nahi","नहीं","na"],[]],
+ ["Haan","hi","answer",["हाँ","ha","han","yes"],[]],
+ ["Nahi","hi","answer",["नहीं","nahin","na","no"],[]],
+ ["I don't know","en","answer",["dont know","pata nahi"],["know","where","when","what"]],
+ ["Please wait, I am still talking","en","control",["wait","ruko","ruk jao","रुको"],[]],
+ ["Please repeat that","en","control",["repeat","again","phir se bolo","dobara"],[]],
+ ["Thank you","en","social",["thanks","dhanyavaad","shukriya","धन्यवाद"],["here","done","lijiye","le lo"]],
+ ["Hello, how are you?","en","social",["hello","hi","namaste","नमस्ते"],["hello","hi","namaste","good morning"]],
+ ["I am fine","en","social",["fine","theek hoon","main theek hoon","ठीक हूँ"],["how are you","kaise ho","kaise hain","feeling","kaisa"]],
+ ["Main theek hoon","hi","social",["मैं ठीक हूँ","theek hoon","fine"],["kaise ho","kaise hain","kaisa lag","tabiyat"]],
+ ["I want water","en","need",["water","paani","pani","पानी","drink"],["water","drink","thirsty","paani","pani","pina","peena"]],
+ ["Mujhe paani chahiye","hi","need",["paani chahiye","pani","मुझे पानी चाहिए","paani","water"],["paani","pani","pina","peena","chahiye","pyaas"]],
+ ["I would like tea, please","en","need",["tea","chai","चाय"],["tea","chai","coffee","drink"]],
+ ["Chai chahiye","mixed","need",["chai","चाय चाहिए","tea"],["chai","tea","peena","chahiye"]],
+ ["I am hungry","en","need",["hungry","food","khana","bhookh","भूख"],["eat","food","lunch","dinner","breakfast","khana","hungry"]],
+ ["Mujhe bhookh lagi hai","hi","need",["bhookh","khana","मुझे भूख लगी है","hungry"],["khana","khaana","bhookh","nashta"]],
+ ["I need to use the toilet","en","need",["toilet","bathroom","washroom","restroom","bathroom jaana hai"],["toilet","bathroom","washroom"]],
+ ["Mujhe bathroom jaana hai","mixed","need",["bathroom","toilet","washroom jaana hai"],["bathroom","toilet"]],
+ ["I am tired, I want to rest","en","need",["tired","rest","sleep","thak gaya","aaram","neend"],["tired","sleep","rest","bed"]],
+ ["Please turn on the fan","en","need",["fan","pankha","hot","garmi"],["hot","warm","fan","garmi"]],
+ ["I am cold, please give me a blanket","en","need",["cold","blanket","thand","kambal"],["cold","blanket","thand","sardi"]],
+ ["Please change my position","en","need",["position","turn me","move","karvat"],["comfortable","position","lying"]],
+ ["Can you call my family?","en","need",["family","call","phone","ghar","ghar wale"],["call","phone","family","visit"]],
+ ["I am in pain","en","medical",["pain","hurts","dard","दर्द","ouch"],["pain","hurt","feeling","dard","how are you"]],
+ ["Mujhe dard ho raha hai","hi","medical",["dard","dard ho raha hai","मुझे दर्द हो रहा है","pain"],["dard","kaisa","tabiyat"]],
+ ["The pain is in my chest","en","medical",["chest","chest pain","seene mein dard"],["where","pain","kahan"]],
+ ["The pain is in my head","en","medical",["head","headache","sar dard","sir dard"],["where","pain","kahan"]],
+ ["I need my medicine","en","medical",["medicine","dawai","dawa","दवाई","tablet"],["medicine","dawai","tablet","dose"]],
+ ["I feel better now","en","medical",["better","accha","behtar"],["how are you","feeling","better","kaise"]],
+ ["I feel dizzy","en","medical",["dizzy","chakkar","चक्कर"],["feeling","how","kaisa"]],
+ ["Help! Please call the nurse now","en","emergency",["help","nurse","emergency","madad","bachao","मदद"],[],true],
+ ["I can't breathe","en","emergency",["breathe","breath","saans","सांस","saans nahi"],[],true],
+];
+const PHRASES = RAW.map((r, i) => ({ id: i + 1, text: r[0], language: r[1], category: r[2], aliases: r[3], keywords: r[4], is_emergency: !!r[5], use_count: 0 }));
+const byText = Object.fromEntries(PHRASES.map(p => [p.text, p]));
+const store = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) } catch { return d } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} } };
+const savedUse = store.get("saathi.use", {});
+PHRASES.forEach(p => p.use_count = savedUse[p.id] || 0);
+
+/* ===================================================== text utils (port of fusion.py) */
+const normalize = t => (t || "").normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s]/gu, " ").replace(/\s+/g, " ").trim();
+const PH_RULES = [["ph","f"],["bh","b"],["dh","d"],["th","t"],["kh","k"],["gh","g"],["sh","s"],["ch","c"],["jh","j"],["ck","k"],["aa","a"],["ee","i"],["oo","u"],["w","v"],["z","s"],["q","k"],["x","ks"],["y","i"]];
+const VOICING = { b: "p", d: "t", g: "k", v: "f", j: "c" };
+function phoneticKey(text) {
+  const out = [];
+  for (let w of normalize(text).split(" ")) {
+    for (const [a, b] of PH_RULES) w = w.split(a).join(b);
+    w = w.replace(/[bdgvj]/g, c => VOICING[c]);
+    if (!w) continue;
+    const sk = w[0] + w.slice(1).replace(/[aeiou]/g, "");
+    out.push(sk.replace(/(.)\1+/g, "$1"));
+  }
+  return out.join(" ");
+}
+function matchCount(a, b) { // Ratcliff/Obershelp, as difflib.SequenceMatcher
+  if (!a.length || !b.length) return 0;
+  let best = 0, ai = 0, bj = 0; const dp = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) { let prev = 0;
+    for (let j = 1; j <= b.length; j++) { const tmp = dp[j];
+      if (a[i - 1] === b[j - 1]) { dp[j] = prev + 1; if (dp[j] > best) { best = dp[j]; ai = i - best; bj = j - best } } else dp[j] = 0;
+      prev = tmp } }
+  if (!best) return 0;
+  return best + matchCount(a.slice(0, ai), b.slice(0, bj)) + matchCount(a.slice(ai + best), b.slice(bj + best));
+}
+const ratio = (a, b) => (a.length + b.length) ? 2 * matchCount(a, b) / (a.length + b.length) : 1;
+function similarity(a, b) {
+  const na = normalize(a), nb = normalize(b);
+  if (!na || !nb) return 0;
+  const char = ratio(na, nb);
+  const pa = phoneticKey(na), pb = phoneticKey(nb);
+  const phon = pa && pb ? ratio(pa, pb) : 0;
+  const ta = new Set(na.split(" ")), tb = new Set(nb.split(" "));
+  let inter = 0; ta.forEach(t => { if (tb.has(t)) inter++ });
+  const token = inter / Math.max(1, Math.min(ta.size, tb.size));
+  let partial = 0; for (const w of na.split(" ")) for (const v of nb.split(" ")) partial = Math.max(partial, ratio(w, v));
+  return Math.max(char, phon, 0.6 * token + 0.4 * partial, 0.85 * partial);
+}
+function estimateSyllables(text) {
+  const n = normalize(text);
+  if (/[ऀ-ॿ]/.test(n)) return Math.max(1, Math.floor((n.match(/[अ-औक-ह]/g) || []).length / 2));
+  return Math.max(1, (n.match(/[aeiouy]+/g) || []).length);
+}
+const YES = new Set(["yes", "haan"]), NO = new Set(["no", "nahi"]);
+const AUX = /^(do|does|did|are|is|was|were|can|could|should|shall|will|would|have|has|may)\b/;
+const WH = /\b(what|which|where|when|who|whom|why|how|kaun|kaunsa|kahan|kab|kaise|kaisa|kaisi|kitna|kitni|kyun|kyon|kis|kisko)\b/;
+const CHOICE = /\b(or|ya)\b/;
+const HINDI_W = /\b(kya|hai|hain|aap|aapko|tum|chahiye|ho|kaise|kaisa|mein|nahi|haan|lagi|raha|rahe|rahi|karo|kar|ka|ki|ke|ko|se)\b/g;
+const looksHindi = t => { const n = normalize(t); return /[ऀ-ॿ]/.test(n) || (n.match(HINDI_W) || []).length >= 2 };
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const keywordHit = (k, nt) => { const kk = normalize(k); return !!kk && new RegExp("(?<![\\p{L}\\p{N}_])" + esc(kk) + "(?![\\p{L}\\p{N}_])", "u").test(nt) };
+function isYesNo(text) {
+  const t = normalize(text);
+  if (!t || CHOICE.test(t) || WH.test(t)) return false;
+  if (AUX.test(t)) return true;
+  return /^kya\b|\bchahiye\b|\bhai na\b|\bthik hai\b|\btheek hai\b/.test(t) && (text || "").includes("?");
+}
+
+/* ===================================================== fusion */
+const W = { asr: 1.0, template: 1.2, sign: 1.5, context: 0.6, cue: 0.8, lip: 0.15, frequency: 0.1, language: 0.1 };
+const cand = (text, conf, sources, p, emotion = "neutral", score) => ({ text, confidence: conf, sources, phrase_id: p ? p.id : null, language: p ? p.language : null, emotion, score: score ?? conf });
+const emotionFor = (cues, p) => p && p.is_emergency ? "urgent" : ({ pain: "pained", frown: "sad", smile: "happy" })[cues.expression || ""] || "neutral";
+
+function fastPath(inp) {
+  for (const pid of inp.sign_phrase_ids) { const p = PHRASES[pid - 1]; if (p && p.is_emergency) return [cand(p.text, 0.99, ["sign:emergency"], p, "urgent")] }
+  if (isYesNo(inp.partner_last) && !inp.asr_text && !inp.template_matches.length) {
+    const hindi = inp.language === "hin" || /\b(kya|chahiye|hai)\b/.test(inp.partner_last.toLowerCase());
+    const c = inp.cues;
+    if (c.head === "nod" || c.thumbs === "up") return [cand(hindi ? "Haan" : "Yes", 0.95, ["gesture:" + (c.head || "thumbs_up")], byText[hindi ? "Haan" : "Yes"])];
+    if (c.head === "shake" || c.thumbs === "down") return [cand(hindi ? "Nahi" : "No", 0.95, ["gesture:" + (c.head || "thumbs_down")], byText[hindi ? "Nahi" : "No"])];
+  }
+  return null;
+}
+function heuristicRank(inp, topK = 3) {
+  const tmpl = Object.fromEntries(inp.template_matches.map(m => [m.phrase_id, m.confidence]));
+  const signs = new Set(inp.sign_phrase_ids), partner = normalize(inp.partner_last), yesNo = isYesNo(inp.partner_last);
+  const maxUse = Math.max(0, ...PHRASES.map(p => p.use_count)) || 1, spelled = normalize(inp.spelled), cue = inp.cues;
+  const scored = PHRASES.map(p => {
+    const forms = [p.text, ...p.aliases]; let s = 0; const src = [];
+    if (inp.asr_text) { const sa = Math.max(...forms.map(f => similarity(inp.asr_text, f))); s += W.asr * sa; if (sa > 0.5) src.push("speech") }
+    if (p.id in tmpl) { s += W.template * tmpl[p.id]; if (tmpl[p.id] > 0.2) src.push("spectrogram") }
+    if (signs.has(p.id)) { s += W.sign; src.push("sign") }
+    if (spelled) {
+      let best = 0;
+      for (const f of forms) for (const v of normalize(f).split(" ")) {
+        if (v.startsWith(spelled) && spelled.length >= 2) best = Math.max(best, 0.6 + 0.4 * spelled.length / v.length);
+        else best = Math.max(best, spelled.length >= 3 ? 0.8 * ratio(spelled, v) : 0);
+      }
+      s += W.sign * best; if (best > 0.5) src.push("isl-spelling");
+    }
+    if (partner) {
+      let sc = p.keywords.some(k => keywordHit(k, partner)) ? 1 : 0;
+      if (yesNo && p.category === "answer") sc = Math.max(sc, 0.7);
+      s += W.context * sc; if (sc) src.push("context");
+    }
+    const low = p.text.toLowerCase(); let scue = 0;
+    if ((cue.head === "nod" || cue.thumbs === "up") && YES.has(low)) scue = 1;
+    else if ((cue.head === "shake" || cue.thumbs === "down") && NO.has(low)) scue = 1;
+    else if (cue.expression === "pain" && (p.category === "medical" || p.category === "emergency")) scue = 0.6;
+    else if (cue.expression === "smile" && p.category === "social") scue = 0.3;
+    s += W.cue * scue; if (scue) src.push("face/head");
+    if (cue.syllables && (inp.asr_text || inp.template_matches.length)) s += W.lip * Math.exp(-Math.abs(cue.syllables - estimateSyllables(p.text)) / 2);
+    s += W.frequency * p.use_count / maxUse;
+    const lang = ({ eng: "en", hin: "hi" })[inp.language];
+    if (lang && (p.language === lang || p.language === "mixed")) s += W.language;
+    return [s, p, src];
+  }).sort((a, b) => b[0] - a[0]);
+  let out = scored.slice(0, topK + 3).map(([s, p, src]) => [s, cand(p.text, 0, src, p, emotionFor(cue, p), s)]);
+  const top = scored.length ? scored[0][0] : 0;
+  if (inp.asr_text && (!scored.length || similarity(inp.asr_text, scored[0][1].text) < 0.6))
+    out.push([top * 0.8, cand(inp.asr_text.trim(), 0, ["speech:raw"], null, emotionFor(cue, null), top * 0.8)]);
+  if (spelled.length >= 2 && !out.slice(0, topK).some(([, c]) => c.sources.includes("isl-spelling")))
+    out.push([top * 0.75 + 0.2, cand(inp.spelled.toUpperCase(), 0, ["isl-spelling:raw"], null, emotionFor(cue, null), top * 0.75 + 0.2)]);
+  out.sort((a, b) => b[0] - a[0]);
+  const seen = new Set(); const list = [];
+  for (const [, c] of out) { const k = normalize(c.text); if (k && !seen.has(k)) { seen.add(k); list.push(c) } }
+  const res = list.slice(0, topK);
+  if (res.length) { const mx = Math.max(...res.map(c => c.score)); const ex = res.map(c => Math.exp(3 * (c.score - mx))); const tot = ex.reduce((a, b) => a + b, 0); res.forEach((c, i) => c.confidence = ex[i] / tot) }
+  return res;
+}
+function suggestReplies(text, topK = 4) {
+  const partner = normalize(text), maxUse = Math.max(0, ...PHRASES.map(p => p.use_count)) || 1, hindi = looksHindi(text), yn = isYesNo(text);
+  return PHRASES.map(p => {
+    let s = 0;
+    if (p.keywords.some(k => keywordHit(k, partner))) s += 1;
+    const forms = [p.text, ...p.aliases].join(" ").toLowerCase();
+    const ov = partner.split(" ").filter(t => t.length > 3 && forms.includes(t));
+    s += 0.4 * Math.min(ov.length, 2);
+    if (yn && p.category === "answer") s += 0.8;
+    if (hindi && (p.language === "hi" || p.language === "mixed")) s += 0.3;
+    s += 0.2 * p.use_count / maxUse;
+    return [s, p];
+  }).sort((a, b) => b[0] - a[0]).slice(0, topK).filter(([s]) => s > 0).map(([s, p]) => cand(p.text, 0, ["context"], p, "neutral", s));
+}
+
+/* ===================================================== DSP (port of dsp.py) */
+const SR = 16000, NFFT = 512, WIN = 400, HOP = 160, NMEL = 40, NMFCC = 13;
+const HAMM = Float32Array.from({ length: WIN }, (_, n) => 0.54 - 0.46 * Math.cos(2 * Math.PI * n / (WIN - 1)));
+const FB = (() => {
+  const h2m = f => 2595 * Math.log10(1 + f / 700), m2h = m => 700 * (10 ** (m / 2595) - 1);
+  const lo = h2m(50), hi = h2m(SR / 2), bins = [];
+  for (let i = 0; i < NMEL + 2; i++) bins.push(Math.floor((NFFT + 1) * m2h(lo + (hi - lo) * i / (NMEL + 1)) / SR));
+  const fb = [];
+  for (let i = 1; i <= NMEL; i++) {
+    const row = new Float32Array(NFFT / 2 + 1); const l = bins[i - 1]; let c = Math.max(bins[i], l + 1); let r = Math.max(bins[i + 1], c + 1);
+    for (let k = l; k < c; k++) row[k] = (k - l) / (c - l);
+    for (let k = c; k < r && k < row.length; k++) row[k] = (r - k) / (r - c);
+    fb.push(row);
+  }
+  return fb;
+})();
+const DCT = Array.from({ length: NMFCC }, (_, k) => Float32Array.from({ length: NMEL }, (_, n) => Math.cos(Math.PI * k * (2 * n + 1) / (2 * NMEL)) * Math.sqrt(2 / NMEL) / (k === 0 ? Math.SQRT2 : 1)));
+function fft(re, im) { // in-place radix-2
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]] } }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) { let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      } }
+  }
+}
+function frameEnergyDb(x) { const n = Math.max(1, 1 + Math.floor((x.length - WIN) / HOP)), e = new Float32Array(n);
+  for (let f = 0; f < n; f++) { let s = 0; for (let k = 0; k < WIN; k++) { const v = (x[f * HOP + k] || 0) * HAMM[k]; s += v * v } e[f] = 10 * Math.log10(s / WIN + 1e-10) } return e }
+function trimSilence(x, rel = -35, pad = 5) {
+  if (x.length < WIN) return x;
+  const e = frameEnergyDb(x); let mx = -Infinity; e.forEach(v => mx = Math.max(mx, v));
+  let first = -1, last = -1; e.forEach((v, i) => { if (v > mx + rel) { if (first < 0) first = i; last = i } });
+  if (first < 0) return x;
+  return x.subarray(Math.max(0, first - pad) * HOP, Math.min(x.length, (last + pad) * HOP + WIN));
+}
+function logmel(x) {
+  const y = new Float32Array(Math.max(x.length, WIN)); y[0] = x[0] || 0; for (let i = 1; i < x.length; i++) y[i] = x[i] - 0.97 * x[i - 1];
+  const n = 1 + Math.floor((y.length - WIN) / HOP), out = [];
+  const re = new Float64Array(NFFT), im = new Float64Array(NFFT), pw = new Float64Array(NFFT / 2 + 1);
+  for (let f = 0; f < n; f++) {
+    re.fill(0); im.fill(0); for (let k = 0; k < WIN; k++) re[k] = y[f * HOP + k] * HAMM[k];
+    fft(re, im); for (let k = 0; k <= NFFT / 2; k++) pw[k] = re[k] * re[k] + im[k] * im[k];
+    const row = new Float32Array(NMEL);
+    for (let m = 0; m < NMEL; m++) { let s = 0; const w = FB[m]; for (let k = 0; k < w.length; k++) if (w[k]) s += w[k] * pw[k]; row[m] = Math.log(s + 1e-8) }
+    out.push(row);
+  }
+  return out;
+}
+function mfcc(lm) {
+  const n = lm.length, D = 2 * NMFCC;
+  const c = lm.map(r => Float32Array.from(DCT, d => { let s = 0; for (let i = 0; i < NMEL; i++) s += d[i] * r[i]; return s }));
+  const at = i => c[Math.min(n - 1, Math.max(0, i))];
+  const f = c.map((r, t) => { const v = new Float32Array(D); v.set(r);
+    for (let j = 0; j < NMFCC; j++) v[NMFCC + j] = ((at(t + 1)[j] - at(t - 1)[j]) + 2 * (at(t + 2)[j] - at(t - 2)[j])) / 10; return v });
+  for (let j = 0; j < D; j++) { let m = 0; f.forEach(v => m += v[j]); m /= n; let s = 0; f.forEach(v => s += (v[j] - m) ** 2); s = Math.sqrt(s / n) + 1e-6; f.forEach(v => v[j] = (v[j] - m) / s) }
+  return f;
+}
+function extract(x) { const t = trimSilence(x); const lm = logmel(t); return { lm, mf: mfcc(lm) } }
+function pool(x, k = 2) { const n = Math.floor(x.length / k); if (n < 4) return x; const D = x[0].length;
+  return Array.from({ length: n }, (_, i) => { const v = new Float32Array(D); for (let j = 0; j < k; j++) { const r = x[i * k + j]; for (let d = 0; d < D; d++) v[d] += r[d] / k } return v }) }
+function dtw(q, t) {
+  const a = pool(q), b = pool(t), n = a.length, m = b.length;
+  if (!n || !m) return Infinity;
+  const dist = (u, v) => { let s = 0; for (let i = 0; i < u.length; i++) { const d = u[i] - v[i]; s += d * d } return Math.sqrt(s) };
+  let prev = new Float64Array(m).fill(Infinity); prev[0] = dist(a[0], b[0]); if (m > 1) prev[1] = dist(a[0], b[1]) * 1.5;
+  for (let i = 1; i < n; i++) { const cur = new Float64Array(m);
+    for (let j = 0; j < m; j++) cur[j] = dist(a[i], b[j]) + Math.min(prev[j], j > 0 ? prev[j - 1] : Infinity, j > 1 ? prev[j - 2] : Infinity);
+    prev = cur }
+  const end = m === 1 ? prev[0] : Math.min(prev[m - 1], prev[m - 2]);
+  return end / n;
+}
+function matchTemplates(qmf, templates, topK = 5, temp = 0.35) {
+  const best = {};
+  for (const t of templates) { const d = dtw(qmf, t.mf); if (d < (best[t.pid] ?? Infinity)) best[t.pid] = d }
+  const ids = Object.keys(best).filter(k => isFinite(best[k])).map(Number);
+  if (!ids.length) return [];
+  const mn = Math.min(...ids.map(i => best[i]));
+  const ex = ids.map(i => Math.exp(-(best[i] - mn) / (temp * Math.max(mn, 1e-6)))), tot = ex.reduce((a, b) => a + b, 0);
+  return ids.map((id, i) => ({ phrase_id: id, distance: best[id], confidence: ex[i] / tot })).sort((a, b) => a.distance - b.distance).slice(0, topK);
+}
+
+/* ===================================================== synthetic dysarthric voice */
+const V = { a: [730, 1090, 2440], i: [270, 2290, 3010], u: [300, 870, 2240], e: [530, 1840, 2480], o: [570, 840, 2410], ae: [660, 1720, 2410], er: [490, 1350, 1690], uh: [640, 1190, 2390] };
+const VOCAB = {
+  "I want water": "a-i w:a p:o p:er",
+  "Mujhe dard ho raha hai": "m:u s:e p:a h:o r:a h:a h:a-i",
+  "Help! Please call the nurse now": "h:e p:i p:o p:uh n:er n:a-u",
+  "I am tired, I want to rest": "a-i ae p:a-i er w:a p:u r:e",
+  "Thank you": "s:ae i-u",
+  "Chai chahiye": "s:a-i s:a h:i-e",
+  "I need my medicine": "a-i n:i m:a-i m:e p:i s:i",
+};
+function rng(seed) { let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296 }
+function synth(text, o) {
+  const r = rng(o.seed), sylls = VOCAB[text].split(" "), parts = [];
+  const blur = f => f.map((v, k) => v * (1 - o.slur) + V.uh[k] * o.slur);
+  const noise = (n, amp, hp) => { const b = new Float32Array(n); let last = 0; for (let i = 0; i < n; i++) { const w = r() * 2 - 1; b[i] = amp * (hp ? w - last : w) * Math.sin(Math.PI * i / n); last = w } return b };
+  for (const sy of sylls) {
+    let [c, v] = sy.includes(":") ? sy.split(":") : [null, sy];
+    const vs = v.split("-").map(k => V[k]); let fA = vs[0], fB = vs[vs.length - 1];
+    if (c === "s") parts.push(noise(Math.round(0.07 * o.rate * SR), 0.12, true));
+    if (c === "h") parts.push(noise(Math.round(0.05 * o.rate * SR), 0.05, false));
+    if (c === "p") { parts.push(new Float32Array(Math.round(0.03 * o.rate * SR))); parts.push(noise(Math.round(0.015 * SR), 0.2, true)) }
+    if (c === "w") fA = V.u; if (c === "r") fA = V.er;
+    if (c === "m" || c === "n") fA = [250, c === "m" ? 1000 : 1700, 2500];
+    fA = blur(fA); fB = blur(fB);
+    const dur = Math.round((0.19 + 0.05 * r()) * o.rate * SR), buf = new Float32Array(dur), nh = Math.floor(3800 / o.f0), ph = new Float64Array(nh + 1);
+    let amps = new Float64Array(nh + 1);
+    for (let i = 0; i < dur; i++) {
+      const t = i / dur;
+      if (i % 64 === 0) { const F = fA.map((x, k) => (x + (fB[k] - x) * Math.min(1, t * 1.3)) * o.fs);
+        for (let h = 1; h <= nh; h++) { const fh = h * o.f0; let a = 0; F.forEach((Fk, k) => a += [1, 0.55, 0.25][k] / (1 + ((fh - Fk) / 90) ** 2)); amps[h] = a / h ** 0.3 } }
+      const f0 = o.f0 * (1 + 0.03 * Math.sin(2 * Math.PI * 4 * i / SR) + 0.02 * (r() - 0.5));
+      let s = 0; for (let h = 1; h <= nh; h++) { ph[h] += 2 * Math.PI * h * f0 / SR; s += amps[h] * Math.sin(ph[h]) }
+      const env = Math.min(1, i / (0.02 * SR)) * Math.min(1, (dur - i) / (0.04 * SR));
+      buf[i] = 0.06 * s * env;
+    }
+    parts.push(buf); parts.push(new Float32Array(Math.round(0.05 * o.rate * SR)));
+  }
+  const lead = new Float32Array(Math.round(0.15 * SR)); parts.unshift(lead); parts.push(lead);
+  const len = parts.reduce((a, b) => a + b.length, 0), x = new Float32Array(len); let off = 0; parts.forEach(p => { x.set(p, off); off += p.length });
+  let pw = 0; x.forEach(v => pw += v * v); pw /= len;
+  const na = Math.sqrt(pw / 10 ** (o.snr / 10)); for (let i = 0; i < len; i++) x[i] += na * (r() * 2 - 1) * 1.732;
+  let pk = 0; x.forEach(v => pk = Math.max(pk, Math.abs(v))); for (let i = 0; i < len; i++) x[i] = x[i] / pk * 0.8;
+  return x;
+}
+
+/* ===================================================== heatmap */
+function ramp(t) { const s = [[8, 19, 26], [14, 80, 100], [30, 150, 140], [190, 170, 60], [250, 200, 80]]; const p = Math.min(.999, Math.max(0, t)) * (s.length - 1), i = Math.floor(p), f = p - i; return s[i].map((v, k) => Math.round(v + (s[i + 1][k] - v) * f)) }
+function drawLM(cv, lm) {
+  const ctx = cv.getContext("2d"), W2 = cv.width, H = cv.height; ctx.fillStyle = "#08131a"; ctx.fillRect(0, 0, W2, H);
+  if (!lm || !lm.length) return;
+  const vals = []; lm.forEach(r => r.forEach(v => vals.push(v))); vals.sort((a, b) => a - b);
+  const lo = vals[Math.floor(vals.length * .05)], hi = vals[Math.floor(vals.length * .99)];
+  const img = ctx.createImageData(W2, H);
+  for (let x = 0; x < W2; x++) { const r = lm[Math.min(lm.length - 1, Math.floor(x * lm.length / W2))];
+    for (let y = 0; y < H; y++) { const m = Math.floor((H - 1 - y) * NMEL / H); const [R, G, B] = ramp((r[m] - lo) / (hi - lo + 1e-6)); const o = 4 * (y * W2 + x); img.data[o] = R; img.data[o + 1] = G; img.data[o + 2] = B; img.data[o + 3] = 255 } }
+  ctx.putImageData(img, 0, 0);
+}
+
+/* ===================================================== state + UI */
+const $ = id => document.getElementById(id);
+const state = { partner: "", asr: "", spelled: "", signs: [], tmatch: [], tmatchLabel: null, cues: { head: "", thumbs: "", expression: "", syllables: null }, language: "auto",
+  candidates: [], shownAt: 0, acts: 0, ranker: "heuristic" };
+const stats = { turns: 0, top1: 0, acts: 0, rankMs: [] };
+const templates = [];
+let toastT;
+const toast = m => { const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600) };
+
+function chatAdd(who, text, meta) { const li = document.createElement("li"); li.className = who; const s = document.createElement("small"); s.textContent = (who === "partner" ? "Partner" : "Patient") + (meta ? " · " + meta : ""); li.append(s, document.createTextNode(text)); $("chat").append(li); li.scrollIntoView({ block: "nearest" }) }
+
+function candEl(c, i, onPick, top) {
+  const b = document.createElement("button"); b.type = "button"; b.className = "cand" + (top ? " top" : "");
+  const k = document.createElement("span"); k.className = "k"; k.textContent = i + 1;
+  const mid = document.createElement("div"); const t = document.createElement("div"); t.className = "t"; t.textContent = c.text; t.lang = c.language === "hi" ? "hi" : "en";
+  const src = document.createElement("div"); src.className = "src";
+  c.sources.forEach(s => { const g = document.createElement("span"); g.className = "tag" + (s.startsWith("sign:emergency") ? " warn" : s === "claude" ? " claude" : ""); g.textContent = s; src.append(g) });
+  if (c.emotion && c.emotion !== "neutral") { const g = document.createElement("span"); g.className = "tag"; g.textContent = "tone: " + c.emotion; src.append(g) }
+  if (c.rationale) { const g = document.createElement("div"); g.className = "hint"; g.textContent = c.rationale; src.append(g) }
+  mid.append(t, src);
+  const cf = document.createElement("div"); cf.className = "conf"; const pc = Math.round(100 * c.confidence); cf.textContent = c.confidence ? pc + "%" : "";
+  if (c.confidence) { const bar = document.createElement("div"); bar.className = "bar"; const bb = document.createElement("b"); bb.style.width = pc + "%"; bar.append(bb); cf.append(bar) }
+  b.append(k, mid, cf); b.addEventListener("click", () => onPick(c, i));
+  return b;
+}
+function renderSuggestions() {
+  const box = $("suggestions"); box.replaceChildren();
+  const s = state.partner ? suggestReplies(state.partner) : [];
+  if (!s.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = state.partner ? "Nothing in the phrasebook fits this. Use the patient signals instead." : "Send what the partner says to get quick replies."; box.append(e); return }
+  s.forEach((c, i) => box.append(candEl({ ...c, confidence: 0, sources: ["quick reply"] }, i, (cc) => { state.acts++; confirm(cc, "quick reply", false) }, false)));
+}
+function inputs() { return { asr_text: state.asr.trim(), template_matches: state.tmatch, spelled: state.spelled, sign_phrase_ids: state.signs, cues: state.cues, partner_last: state.partner, language: state.language } }
+function hasSignal() { const c = state.cues; return !!(state.asr.trim() || state.tmatch.length || state.spelled || state.signs.length || c.head || c.thumbs || c.expression) }
+function rank() {
+  const box = $("candidates");
+  if (!hasSignal()) { state.candidates = []; box.replaceChildren(); const e = document.createElement("div"); e.className = "empty"; e.textContent = "Give the patient a signal on the right: type what was heard, say it slurred, fingerspell, or set a cue. Suggestions update straight away."; box.append(e); $("latency").textContent = ""; $("emergency").hidden = true; return }
+  const t0 = performance.now(); const inp = inputs();
+  const fast = fastPath(inp); const list = fast || heuristicRank(inp);
+  const ms = performance.now() - t0; stats.rankMs.push(ms); state.ranker = fast ? "fast path" : "heuristic";
+  state.candidates = list; state.shownAt = performance.now(); state.acts = 0;
+  $("latency").textContent = state.ranker + " · " + ms.toFixed(1) + " ms";
+  $("emergency").hidden = !(fast && fast[0].sources[0] === "sign:emergency");
+  drawCands();
+  updateStats();
+}
+function drawCands() { const box = $("candidates"); box.replaceChildren(); state.candidates.forEach((c, i) => box.append(candEl(c, i, (cc, ii) => { state.acts++; confirm(cc, "suggestion " + (ii + 1), ii === 0) }, i === 0))) }
+
+function speak(c) {
+  if (!("speechSynthesis" in window)) return toast("Your browser has no speech voice, so the message was added to the transcript only.");
+  try {
+    const u = new SpeechSynthesisUtterance(c.text); const hi = c.language === "hi" || c.language === "mixed" || /[ऀ-ॿ]/.test(c.text);
+    u.lang = hi ? "hi-IN" : "en-IN";
+    const vs = speechSynthesis.getVoices(); u.voice = vs.find(v => v.lang === u.lang) || vs.find(v => v.lang.startsWith(hi ? "hi" : "en")) || null;
+    u.rate = { pained: 0.85, sad: 0.9, urgent: 1.1, happy: 1.05 }[c.emotion] || 1; u.pitch = c.emotion === "urgent" ? 1.15 : 1;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch { toast("Couldn't play the browser voice. The message was added to the transcript.") }
+}
+function confirm(c, via, wasTop) {
+  speak(c);
+  const secs = state.shownAt ? ((performance.now() - state.shownAt) / 1000).toFixed(1) + " s" : "";
+  chatAdd("patient", c.text, [via, secs].filter(Boolean).join(" · "));
+  stats.turns++; if (wasTop) stats.top1++; stats.acts += Math.max(1, state.acts);
+  if (c.phrase_id) { PHRASES[c.phrase_id - 1].use_count++; savedUse[c.phrase_id] = PHRASES[c.phrase_id - 1].use_count; store.set("saathi.use", savedUse) }
+  resetSignals(); updateStats();
+}
+function updateStats() {
+  $("sTurns").textContent = stats.turns;
+  $("sTop1").textContent = stats.turns ? Math.round(100 * stats.top1 / stats.turns) + "%" : "–";
+  $("sActs").textContent = stats.turns ? (stats.acts / stats.turns).toFixed(1) : "–";
+  $("sRank").textContent = stats.rankMs.length ? (stats.rankMs.reduce((a, b) => a + b, 0) / stats.rankMs.length).toFixed(1) + " ms" : "–";
+}
+function resetSignals() {
+  state.asr = ""; $("asrText").value = ""; state.spelled = ""; state.signs = []; state.tmatch = []; state.tmatchLabel = null;
+  state.cues = { head: "", thumbs: "", expression: "", syllables: null };
+  document.querySelectorAll(".seg[data-cue]").forEach(seg => { const k = seg.dataset.cue; seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === (k === "language" ? state.language : "")))) });
+  renderSpelled(); renderSigns(); renderSay(); rank();
+}
+
+/* ---- partner */
+const PARTNER_EX = ["Kya peena hai, paani ya chai?", "Do you need your medicine?", "How are you feeling today?", "Aapko dard ho raha hai kya?", "Where does it hurt?", "Is the room too hot?"];
+PARTNER_EX.forEach(t => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = t; b.addEventListener("click", () => { $("partnerText").value = t; sendPartner() }); $("partnerExamples").append(b) });
+function sendPartner() { const t = $("partnerText").value.trim(); if (!t) return; state.partner = t; chatAdd("partner", t); $("partnerText").value = ""; renderSuggestions(); state.acts = 0; rank() }
+$("partnerForm").addEventListener("submit", e => { e.preventDefault(); sendPartner() });
+
+/* ---- ASR */
+const ASR_EX = ["ai wan waa", "mujhe dar ho", "neers", "tank yu", "dawa", "chae"];
+ASR_EX.forEach(t => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = t; b.addEventListener("click", () => { $("asrText").value = t; state.asr = t; state.acts++; rank() }); $("asrExamples").append(b) });
+let asrT; $("asrText").addEventListener("input", e => { clearTimeout(asrT); asrT = setTimeout(() => { state.asr = e.target.value; rank() }, 120) });
+
+/* ---- ISL */
+const keys = $("keys");
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(L => { const b = document.createElement("button"); b.type = "button"; b.textContent = L; b.setAttribute("aria-label", "Sign letter " + L); b.addEventListener("click", () => { state.spelled += L; state.acts++; renderSpelled(); rank() }); keys.append(b) });
+[["DEL", () => state.spelled = state.spelled.slice(0, -1)], ["CLEAR", () => state.spelled = ""]].forEach(([l, f]) => { const b = document.createElement("button"); b.type = "button"; b.className = "ctl"; b.textContent = l; b.addEventListener("click", () => { f(); renderSpelled(); rank() }); keys.append(b) });
+function renderSpelled() { $("spelled").textContent = state.spelled || " " }
+const SIGNS = [["HELP", "Help! Please call the nurse now"], ["WATER", "I want water"], ["PAIN", "I am in pain"], ["TOILET", "I need to use the toilet"]];
+function renderSigns() { const box = $("signChips"); box.replaceChildren(); SIGNS.forEach(([l, t]) => { const id = byText[t].id; const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = l; b.setAttribute("aria-pressed", String(state.signs.includes(id))); if (state.signs.includes(id)) { b.style.background = "var(--teal)"; b.style.color = "var(--on-accent)" }
+  b.addEventListener("click", () => { state.signs = state.signs.includes(id) ? state.signs.filter(x => x !== id) : [...state.signs, id]; state.acts++; renderSigns(); rank() }); box.append(b) }) }
+
+/* ---- cues */
+document.querySelectorAll(".seg[data-cue]").forEach(seg => {
+  const k = seg.dataset.cue;
+  seg.querySelectorAll("button").forEach(b => { b.type = "button"; b.setAttribute("aria-pressed", String(b.dataset.v === (k === "language" ? state.language : "")));
+    b.addEventListener("click", () => { if (k === "language") state.language = b.dataset.v; else state.cues[k] = b.dataset.v; state.acts++;
+      seg.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); rank() }) });
+});
+$("resetBtn").addEventListener("click", resetSignals);
+
+/* ---- spectrogram in conversation */
+let seedN = 1000;
+function renderSay() {
+  const box = $("sayResult"); box.replaceChildren();
+  if (!state.tmatch.length) { const s = document.createElement("span"); s.className = "hint"; s.textContent = "No recording yet. Say it slurred makes a slower, mumbled synthetic recording and matches it with DTW."; box.append(s); return }
+  const cv = document.createElement("canvas"); cv.className = "mini"; cv.width = 160; cv.height = 48; drawLM(cv, state.tmatchLabel.lm);
+  const top = state.tmatch[0]; const s = document.createElement("span");
+  s.textContent = `Best match: “${PHRASES[top.phrase_id - 1].text}” ${Math.round(top.confidence * 100)}% (distance ${top.distance.toFixed(2)}, ${state.tmatchLabel.ms.toFixed(0)} ms). Actually said: “${state.tmatchLabel.said}”.`;
+  box.append(cv, s);
+}
+$("sayBtn").addEventListener("click", () => {
+  const said = $("sayPhrase").value; const r = rng(seedN++);
+  const x = synth(said, { rate: 1.25 + 0.4 * r(), slur: 0.25 + 0.12 * r(), f0: 105 + 30 * r(), fs: 0.96 + 0.08 * r(), snr: 12 + 6 * r(), seed: seedN * 7 });
+  const t0 = performance.now(); const f = extract(x); const m = matchTemplates(f.mf, templates); const ms = performance.now() - t0;
+  state.tmatch = m.map(v => ({ phrase_id: v.phrase_id, confidence: v.confidence, distance: v.distance })); state.tmatchLabel = { lm: f.lm, ms, said };
+  state.acts++; renderSay(); rank();
+});
+$("sayClear").addEventListener("click", () => { state.tmatch = []; state.tmatchLabel = null; renderSay(); rank() });
+
+/* ---- keyboard */
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, select, textarea") || $("view-converse").hidden) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= 3 && state.candidates[n - 1]) { e.preventDefault(); state.acts++; confirm(state.candidates[n - 1], "key " + n, n === 1) }
+  else if (e.key === "Enter" && state.candidates[0] && !e.target.matches("button")) { e.preventDefault(); state.acts++; confirm(state.candidates[0], "Enter", true) }
+});
+
+/* ---- tabs */
+document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("nav.tabs button").forEach(x => x.setAttribute("aria-selected", String(x === b)));
+  ["converse", "spectro", "results"].forEach(v => $("view-" + v).hidden = v !== b.dataset.view);
+  if (b.dataset.view === "spectro") renderTemplates();
+}));
+
+/* ===================================================== spectrogram tab */
+let lastAudio = null;
+function phraseOptions(sel, list) { sel.replaceChildren(); list.forEach(t => { const o = document.createElement("option"); o.value = t; o.textContent = t; sel.append(o) }) }
+function enrollSynthetic() {
+  Object.keys(VOCAB).forEach((t, pi) => [[1.0, 0.18, 118], [1.15, 0.22, 112]].forEach(([rate, slur, f0], k) => {
+    const x = synth(t, { rate, slur, f0, fs: 1, snr: 30, seed: 17 + pi * 31 + k });
+    const f = extract(x); templates.push({ pid: byText[t].id, text: t, mf: f.mf, lm: f.lm, origin: "synthetic", secs: x.length / SR });
+  }));
+}
+function renderTemplates() {
+  const box = $("tmplList"); box.replaceChildren(); $("tmplCount").textContent = templates.length + " recordings · " + new Set(templates.map(t => t.pid)).size + " phrases";
+  templates.forEach(t => { const d = document.createElement("div"); const s = document.createElement("span"); s.textContent = t.text; const m = document.createElement("span"); m.className = "lat"; m.textContent = `${t.origin} · ${t.secs.toFixed(2)} s · ${t.mf.length} frames`;
+    const cv = document.createElement("canvas"); cv.width = 230; cv.height = 40; d.append(s, cv, m); box.append(d); drawLM(cv, t.lm) });
+}
+function showMatch(lm, mf, label, ms, said) {
+  drawLM($("qCanvas"), lm); $("qCap").textContent = label;
+  const m = matchTemplates(mf, templates, 7);
+  const tb = $("matchTable").tBodies[0]; tb.replaceChildren();
+  m.forEach((v, i) => { const tr = document.createElement("tr"); if (i === 0) tr.className = "best"; [PHRASES[v.phrase_id - 1].text + (said && PHRASES[v.phrase_id - 1].text === said ? "  ✓ said" : ""), v.distance.toFixed(3), (100 * v.confidence).toFixed(1) + "%"].forEach(x => { const td = document.createElement("td"); td.textContent = x; tr.append(td) }); tb.append(tr) });
+  if (m.length) { const bt = templates.filter(t => t.pid === m[0].phrase_id).sort((a, b) => dtw(mf, a.mf) - dtw(mf, b.mf))[0]; drawLM($("tCanvas"), bt.lm); $("tCap").textContent = `Best match: “${bt.text}” (${bt.origin})` }
+  $("specLat").textContent = `Features and DTW against ${templates.length} recordings took ${ms.toFixed(0)} ms on this device.`;
+}
+function runTest() {
+  const said = $("testPhrase").value, rate = +$("rate").value, slur = +$("slur").value, snr = +$("snr").value;
+  const x = synth(said, { rate, slur, f0: 108, fs: 0.97, snr, seed: seedN++ * 13 }); lastAudio = x; $("playBtn").disabled = false;
+  const t0 = performance.now(); const f = extract(x); const mt = matchTemplates(f.mf, templates); const ms = performance.now() - t0; void mt;
+  showMatch(f.lm, f.mf, `Test recording: “${said}”, ${rate.toFixed(2)}× slower, blur ${slur.toFixed(2)}, ${snr} dB SNR, ${(x.length / SR).toFixed(2)} s`, ms, said);
+}
+["rate", "slur", "snr"].forEach(id => { const u = () => $(id + "V").textContent = id === "rate" ? (+$(id).value).toFixed(2) + "×" : id === "snr" ? $(id).value + " dB" : (+$(id).value).toFixed(2); $(id).addEventListener("input", u); u() });
+$("testBtn").addEventListener("click", runTest);
+$("playBtn").addEventListener("click", () => { if (!lastAudio) return; try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const b = ac.createBuffer(1, lastAudio.length, SR); b.copyToChannel(lastAudio, 0); const s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start() } catch { toast("This browser couldn't play the audio.") } });
+async function decodeFile(file) {
+  const buf = await file.arrayBuffer(); const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const ac = new AC(1, 1, 44100); const ab = await ac.decodeAudioData(buf);
+  const ch = ab.getChannelData(0), sr = ab.sampleRate, n = Math.round(ch.length * SR / sr), x = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const p = i * sr / SR, j = Math.floor(p), f = p - j; x[i] = (ch[j] || 0) * (1 - f) + (ch[j + 1] || 0) * f }
+  return x;
+}
+$("upEnroll").addEventListener("change", async e => { const file = e.target.files[0]; if (!file) return;
+  try { const x = await decodeFile(file); if (x.length < SR * 0.3) throw new Error("short"); const t = $("upPhrase").value; const f = extract(x);
+    templates.push({ pid: byText[t].id, text: t, mf: f.mf, lm: f.lm, origin: "your file", secs: x.length / SR }); renderTemplates(); refreshSayOptions(); toast(`Enrolled “${t}” from ${file.name}`) }
+  catch { toast("Couldn't read that file. Use a WAV, MP3 or M4A recording at least 0.3 s long.") } e.target.value = "" });
+$("upTest").addEventListener("change", async e => { const file = e.target.files[0]; if (!file) return;
+  try { const x = await decodeFile(file); const t0 = performance.now(); const f = extract(x); const ms = performance.now() - t0; showMatch(f.lm, f.mf, `Your file: ${file.name}, ${(x.length / SR).toFixed(2)} s`, ms + 0, null) }
+  catch { toast("Couldn't read that file. Use a WAV, MP3 or M4A recording.") } e.target.value = "" });
+function refreshSayOptions() { const cur = $("sayPhrase").value; phraseOptions($("sayPhrase"), Object.keys(VOCAB)); if (cur) $("sayPhrase").value = cur }
+
+/* ===================================================== Claude re-rank (optional) */
+(async () => {
+  let sample = null; try { sample = window.claude ? await window.claude.use("sample") : null } catch { sample = null }
+  if (!sample) return;
+  const btn = $("claudeBtn"); btn.hidden = false;
+  btn.addEventListener("click", async () => {
+    if (!hasSignal()) return toast("Give the patient a signal first.");
+    btn.disabled = true; const old = btn.textContent; btn.textContent = "Thinking…";
+    const inp = inputs();
+    const prompt = `You help a person with dysarthria (impaired speech) communicate. Pick the 3 messages they most likely mean, given these noisy signals. Prefer phrasebook entries, but you may write a short new message if none fits. Keep the patient's language (English, Hindi in Roman script, or Hinglish).
+Signals (JSON): ${JSON.stringify({ partner_said: inp.partner_last, speech_to_text_heard: inp.asr_text, spectrogram_matches: inp.template_matches.map(m => ({ phrase: PHRASES[m.phrase_id - 1].text, confidence: +m.confidence.toFixed(3) })), isl_fingerspelled: inp.spelled, phrase_signs: inp.sign_phrase_ids.map(i => PHRASES[i - 1].text), cues: inp.cues, heuristic_shortlist: state.candidates.map(c => ({ text: c.text, confidence: +c.confidence.toFixed(3) })) })}
+Phrasebook: ${JSON.stringify(PHRASES.map(p => p.text))}
+Reply with JSON only: {"candidates":[{"text":string,"confidence":number 0-1,"rationale":string under 15 words}]}`;
+    const t0 = performance.now();
+    try {
+      const out = await sample.json(prompt, { modelTier: "quick" });
+      const list = (out && Array.isArray(out.candidates) ? out.candidates : []).slice(0, 3).filter(c => c && typeof c.text === "string" && c.text.trim());
+      if (!list.length) throw { code: "empty" };
+      state.candidates = list.map(c => { const p = byText[c.text]; return { text: c.text.trim(), confidence: Math.max(0, Math.min(1, +c.confidence || 0)), sources: ["claude"], phrase_id: p ? p.id : null, language: p ? p.language : null, emotion: emotionFor(state.cues, p), rationale: String(c.rationale || "").slice(0, 120) } });
+      state.shownAt = performance.now(); drawCands(); $("latency").textContent = `claude re-rank · ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    } catch (e) {
+      if (e && e.code === "not_granted") { btn.hidden = true; toast("Claude re-ranking is off. The on-device ranker still works.") }
+      else if (e && e.code === "rate_limited") toast("Too many requests to Claude. Wait a moment, then try again.");
+      else toast("Claude didn't return a usable answer, so the on-device ranking is kept.");
+    } finally { btn.disabled = false; btn.textContent = old }
+  });
+})();
+
+/* ===================================================== boot: a realistic first frame */
+phraseOptions($("testPhrase"), Object.keys(VOCAB)); phraseOptions($("upPhrase"), Object.keys(VOCAB)); refreshSayOptions();
+enrollSynthetic(); renderTemplates();
+state.partner = "Kya peena hai, paani ya chai?"; chatAdd("partner", state.partner, "example"); renderSuggestions();
+state.asr = "ai wan waa"; $("asrText").value = state.asr; state.cues.expression = "";
+document.querySelectorAll(".seg[data-cue]").forEach(seg => { const k = seg.dataset.cue; seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === (k === "language" ? state.language : state.cues[k] || "")))) });
+renderSpelled(); renderSigns(); renderSay(); rank();
+$("testPhrase").value = "I want water"; runTest();
+</script>

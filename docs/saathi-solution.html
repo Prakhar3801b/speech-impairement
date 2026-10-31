@@ -1,0 +1,363 @@
+<title>Saathi One-Signal Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&family=Atkinson+Hyperlegible+Mono:wght@400;600&family=Noto+Sans+Devanagari:wght@500;700&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with full-width bands for the analysis table and the build plan.
+   Colors reuse the Saathi app's own tokens (frontend/styles.css): green = patient, blue = partner. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #eaeef3;
+  --text: #15202b;
+  --muted: #55657a;
+  --border: #d5dce5;
+  --patient: #0b6e4f;
+  --patient-soft: #e3f3ec;
+  --partner: #2457c5;
+  --partner-soft: #e6edfb;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --warn: #9a4a06;
+  --warn-soft: #fdf1e3;
+  --ok: #0b6e4f;
+  --font-body: "Atkinson Hyperlegible Next", "Noto Sans Devanagari", system-ui, "Segoe UI", sans-serif;
+  --font-hi: "Noto Sans Devanagari", "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #171e26; --surface-2: #1f2832; --text: #e7edf3; --muted: #9aabbc;
+    --border: #2b3643; --patient: #3fcf98; --patient-soft: #12302a; --partner: #7ea6ff; --partner-soft: #182540;
+    --danger: #ff7a6e; --danger-soft: #3a1a18; --warn: #f7a145; --warn-soft: #33240f; --ok: #3fcf98;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #171e26; --surface-2: #1f2832; --text: #e7edf3; --muted: #9aabbc;
+  --border: #2b3643; --patient: #3fcf98; --patient-soft: #12302a; --partner: #7ea6ff; --partner-soft: #182540;
+  --danger: #ff7a6e; --danger-soft: #3a1a18; --warn: #f7a145; --warn-soft: #33240f; --ok: #3fcf98;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 17px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+.col { max-width: 68ch; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; }
+section { display: flex; flex-direction: column; gap: 18px; }
+.eyebrow { font: 600 0.78rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.2rem; color: var(--muted); max-width: 60ch; }
+.hi { font-family: var(--font-hi); }
+code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+a { color: var(--partner); }
+:focus-visible { outline: 3px solid #f5b301; outline-offset: 2px; }
+
+/* hero */
+header { display: flex; flex-direction: column; gap: 18px; }
+.thesis { display: flex; flex-wrap: wrap; gap: 10px; }
+.pill { font: 600 0.85rem/1 var(--font-mono); padding: 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
+.pill.pt { background: var(--patient-soft); color: var(--patient); border-color: transparent; }
+.pill.pr { background: var(--partner-soft); color: var(--partner); border-color: transparent; }
+
+/* doc cards */
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.doc { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.doc .meta { font: 0.82rem/1.4 var(--font-mono); color: var(--muted); }
+.doc ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 6px; }
+
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.95rem; }
+th, td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+th { font: 600 0.76rem/1.3 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--surface-2); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); white-space: nowrap; }
+.st { display: inline-block; font: 600 0.75rem/1 var(--font-mono); padding: 5px 8px; border-radius: 6px; white-space: nowrap; }
+.st.done { background: var(--patient-soft); color: var(--ok); }
+.st.part { background: var(--warn-soft); color: var(--warn); }
+.st.gap { background: var(--danger-soft); color: var(--danger); }
+
+/* the idea blocks */
+.ideas { display: flex; flex-direction: column; gap: 40px; }
+.idea { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.idea > * { min-width: 0; }
+.idea .txt { display: flex; flex-direction: column; gap: 10px; }
+.idea .why { font-size: 0.92rem; color: var(--muted); border-left: 3px solid var(--border); padding-left: 12px; }
+@media (max-width: 760px) { .idea { grid-template-columns: 1fr; } }
+
+/* phone mock for question-shaped replies */
+.mock { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.bubble { border-radius: 14px; padding: 10px 14px; max-width: 90%; }
+.bubble.pr { background: var(--partner-soft); color: var(--text); align-self: flex-start; }
+.bubble .who { font: 600 0.72rem/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--partner); display: block; margin-bottom: 4px; }
+.qtype { font: 600 0.75rem/1 var(--font-mono); color: var(--muted); }
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.choice { border-radius: 14px; padding: 22px 12px; text-align: center; font-size: 1.5rem; font-weight: 800; border: 2px solid var(--border); background: var(--surface-2); }
+.choice.on { border-color: var(--patient); background: var(--patient-soft); color: var(--patient); }
+.choice small { display: block; font: 500 0.78rem/1.3 var(--font-body); color: var(--muted); margin-top: 4px; }
+.hint { font: 0.85rem/1.4 var(--font-mono); color: var(--muted); text-align: center; }
+
+/* my-yes options */
+.yes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.yes { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+.yes b { font-size: 1rem; }
+.yes span { font: 0.78rem/1.35 var(--font-mono); color: var(--muted); }
+.yes.pick { border: 2px solid var(--patient); }
+
+/* data figure */
+.fig { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.bar { display: grid; grid-template-columns: 110px minmax(0, 1fr) 52px; gap: 10px; align-items: center; font-size: 0.88rem; }
+.bar .track { height: 12px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--patient); border-radius: 6px; }
+.bar .fill.bad { background: var(--danger); }
+.bar .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* turn flow */
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; counter-reset: s; }
+.step { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.step .n { font: 700 0.8rem/1 var(--font-mono); color: var(--muted); }
+.step.pr { border-top: 4px solid var(--partner); }
+.step.pt { border-top: 4px solid var(--patient); }
+.step .t { font: 600 0.8rem/1.3 var(--font-mono); color: var(--muted); margin-top: auto; }
+@media (max-width: 860px) { .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .flow { grid-template-columns: 1fr; } }
+
+.note { background: var(--warn-soft); border-radius: 12px; padding: 14px 16px; font-size: 0.95rem; }
+ul.plain { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 8px; }
+footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) { .choice.on { transition: background .2s; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">AI Manthan 2.0 · Problem Statement 16 · solution design</span>
+  <h1>Saathi: one signal is enough</h1>
+  <p class="lede">The patient shouldn't have to compose a message. Saathi works out the likely answers from what the partner just asked, and the patient picks one with a single movement of their choice. Their own voice then speaks it.</p>
+  <div class="thesis">
+    <span class="pill pr">Partner asks</span>
+    <span class="pill">Saathi shapes 2–3 answers</span>
+    <span class="pill pt">Patient gives “my yes”</span>
+    <span class="pill pt">Spoken in their voice</span>
+  </div>
+</header>
+
+<section>
+  <span class="eyebrow">What the two documents ask for</span>
+  <h2>Reading the documents</h2>
+  <div class="docs">
+    <div class="doc">
+      <h3>PS16_Voice_Restoration.pdf</h3>
+      <span class="meta">1 page · Acropolis Institute, Dept. of IT</span>
+      <p>This is the official problem sheet. It holds two statements. PS1 (drone and LIDAR monitoring of bridges and dams) doesn't apply to us. PS16 is ours:</p>
+      <ul>
+        <li>Real-time fusion of voice, gestures, face and lips, plus listening to the partner, suggesting replies and speaking in a personal voice.</li>
+        <li>ElevenLabs is <b>mandatory</b> for both recognition and speech.</li>
+        <li>English, Hindi and code-mixed speech. Voice cloning needs consent.</li>
+        <li>Judged on WER with and without fusion, intent accuracy, latency under 2 s, and the effort it takes to confirm a reply.</li>
+      </ul>
+    </div>
+    <div class="doc">
+      <h3>VaaniSetu — PS16 Build Guide.pdf</h3>
+      <span class="meta">17 pages · product called “Clio”</span>
+      <p>A full blueprint covering a Next.js + FastAPI monorepo, Scribe v2 Realtime sockets, MediaPipe in web workers, Claude Haiku for fusion, and Flash v2.5 or v4 Turbo for speech. It also has a consent wizard, ten build phases (about 23 h) and a demo script.</p>
+      <ul>
+        <li>Its UX ideas are useful: one-action confirmation, emergency mode, a latency HUD, a gesture rule layer.</li>
+        <li>It assumes a fresh rewrite. Your repo already covers most of the pipeline in FastAPI with vanilla JS, so <b>don't rewrite</b>. Close the gaps instead.</li>
+        <li>Everything in it is generic: any team could build Clio. Nothing in it uses your ISL dataset.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>PS16 requirement</th><th>Saathi repo today</th><th>Status</th><th>What this plan adds</th></tr></thead>
+      <tbody>
+        <tr><td>Analyse the patient's voice</td><td>Scribe batch on push-to-talk, plus spectrogram DTW against the patient's own recordings</td><td><span class="st done">done</span></td><td>Per-condition weighting of voice</td></tr>
+        <tr><td>Gestures, face, lips</td><td>MediaPipe hands and face blendshapes, nod/shake, lip syllable count, ISL k-NN</td><td><span class="st done">done</span></td><td>“My yes” calibration; ISL works before any training</td></tr>
+        <tr><td>Fuse into an intent</td><td>Fast path, then heuristic ranker, then optional Claude re-rank</td><td><span class="st done">done</span></td><td>Question-shaped candidates</td></tr>
+        <tr><td>Listen to the other person</td><td>Partner push-to-talk on the same laptop</td><td><span class="st part">partial</span></td><td>Partner's phone as a second mic with live captions</td></tr>
+        <tr><td>Suggest replies, low effort</td><td>3 candidates; keys 1–3, click, thumbs, Enter</td><td><span class="st part">partial</span></td><td>Answers shaped to the question; one action per turn</td></tr>
+        <tr><td>Personalised voice + consent</td><td>Voice Design; IVC gated by a typed consent record; revoke</td><td><span class="st part">partial</span></td><td>Spoken consent, plus “voice legacy” banking</td></tr>
+        <tr><td>Evaluation</td><td>Simulated ablation only (<code>eval/run_eval.py</code>)</td><td><span class="st gap">gap</span></td><td>TORGO baseline plus acted sessions, labelled SIMULATED</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">The solution</span>
+  <h2>What makes Saathi different</h2>
+  <p class="col">The build guide adds more and more ways for the patient to express themselves. Saathi goes the other way: each turn should take the patient as little as possible. It does this in five ways, and each one fits into code you already have.</p>
+
+  <div class="ideas">
+
+    <div class="idea">
+      <div class="txt">
+        <h3>Answers shaped to the question</h3>
+        <p>Most of what a partner says is a question, and the type of question already limits the answer. Before ranking anything, Saathi sorts the partner's last utterance into one of three types:</p>
+        <ul class="plain">
+          <li><b>Yes/no</b> (<span class="hi">“Dawai li?”</span>, “Are you cold?”): show two huge cards, <span class="hi">Haan</span> / <span class="hi">Nahi</span>.</li>
+          <li><b>Choice</b> (<span class="hi">“Thanda ya normal?”</span>, “tea or coffee”): pull out the options and use them as the cards.</li>
+          <li><b>Open</b> (<span class="hi">kya, kab, kahan,</span> what, when): fall back to today's 3 ranked suggestions from the phrasebook.</li>
+        </ul>
+        <p class="why">Why it's easy: for yes/no and choice questions the patient picks from two options. Effort goes from “find the right message” to “choose left or right”.</p>
+      </div>
+      <div class="mock" aria-label="Example of question-shaped replies">
+        <div class="bubble pr"><span class="who">Partner</span><span class="hi">Paani thanda ya normal?</span></div>
+        <span class="qtype">detected: choice · options from the partner's own words</span>
+        <div class="choices">
+          <div class="choice">Thanda<small>cold</small></div>
+          <div class="choice on">Normal<small>room temperature</small></div>
+        </div>
+        <span class="hint">nod = speak “Normal, please” · head shake = move to the next card</span>
+      </div>
+    </div>
+
+    <div class="idea">
+      <div class="txt">
+        <h3>“My yes”: one movement, chosen by the patient</h3>
+        <p>The guide asks for 6 calibration gestures, and the repo asks for 2–3 recordings of every ISL letter. Saathi's setup asks for one thing. The patient picks the movement that's easiest for them and does it three times, and Saathi learns that person's threshold for it. That movement then confirms everything. A second, opposite movement for “next” is optional.</p>
+        <p>Every option below is already detected by <code>frontend/js/vision.js</code> through MediaPipe blendshapes and head pose, so this is a threshold per user, not a new model.</p>
+        <p class="why">Why it's easy: a patient with ALS can't give a thumbs-up but can still raise their eyebrows. Saathi uses whatever movement still works for them.</p>
+      </div>
+      <div class="yes-grid">
+        <div class="yes pick"><b>Nod</b><span>head pitch</span></div>
+        <div class="yes"><b>Brow raise</b><span>browInnerUp</span></div>
+        <div class="yes"><b>Thumbs-up</b><span>hand landmarks</span></div>
+        <div class="yes"><b>Long blink</b><span>eyeBlink · held 0.8 s</span></div>
+        <div class="yes"><b>Smile</b><span>mouthSmile</span></div>
+        <div class="yes"><b>Switch / Space</b><span>any key or USB switch</span></div>
+      </div>
+    </div>
+
+    <div class="idea">
+      <div class="txt">
+        <h3>A profile per condition that adjusts the system</h3>
+        <p>At onboarding the caregiver picks the condition. That choice sets the fusion weights, timing and confirmation defaults, so nobody has to change settings by hand. The values in the table are starting points to tune during testing, not clinical findings.</p>
+      </div>
+      <div class="tbl">
+        <table style="min-width:520px">
+          <thead><tr><th>Profile</th><th>Trust most</th><th>Default “yes”</th><th>Adjustments</th></tr></thead>
+          <tbody>
+            <tr><td><b>ALS</b></td><td>Voice early, face later</td><td>Brow raise</td><td>Prompts voice banking on day 1; switch scanning once the hands weaken</td></tr>
+            <tr><td><b>Cerebral palsy</b></td><td>Personal templates, ISL</td><td>Hold 1.5 s</td><td>Ignores movements shorter than 600 ms (involuntary)</td></tr>
+            <tr><td><b>Parkinson's</b></td><td>Voice with boosted gain</td><td>Thumbs-up</td><td>Smooths hand-landmark tremor; longer manual commit window</td></tr>
+            <tr><td><b>Stroke</b></td><td>Context, choice cards</td><td>Nod</td><td>One-hand ISL subset; shorter reply wording</td></tr>
+            <tr><td><b>Laryngectomy</b></td><td>Lips + ISL; voice weight near 0</td><td>Thumbs-up</td><td>Voice cloned from pre-surgery recordings, with consent</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="idea">
+      <div class="txt">
+        <h3>Signs work on day one, then learn as you talk</h3>
+        <p>Today the ISL classifier starts empty. Saathi seeds it from <code>data/ISL_Dataset</code>: an offline script runs MediaPipe Hands over each image and stores the 254-dimension two-hand feature vector as a <i>seed</i> sample in <code>sign_samples</code>.</p>
+        <p>Each time the patient confirms a message that involved a sign, that live sample is saved under the confirmed label. Once a letter has 3 of the user's own samples, its seed samples are dropped. Nobody has to run a training session.</p>
+        <p class="why">Before seeding: remove the 16 duplicate images, including the 8 that sit in both O and Q. Expect some images to fail hand detection at 128×128. H, J, Y and the digits aren't in the dataset, so they still need recording in the app.</p>
+      </div>
+      <div class="fig" aria-label="ISL dataset coverage">
+        <span class="eyebrow">ISL_Dataset coverage · images per letter</span>
+        <div class="bar"><span>E (most)</span><div class="track"><div class="fill" style="width:100%"></div></div><span class="v">46</span></div>
+        <div class="bar"><span>B, O, Q</span><div class="track"><div class="fill" style="width:82.6%"></div></div><span class="v">38</span></div>
+        <div class="bar"><span>median</span><div class="track"><div class="fill" style="width:63%"></div></div><span class="v">29</span></div>
+        <div class="bar"><span>F (fewest)</span><div class="track"><div class="fill" style="width:45.7%"></div></div><span class="v">21</span></div>
+        <div class="bar"><span>H, J, Y, 0–9</span><div class="track"><div class="fill bad" style="width:0%"></div></div><span class="v">0</span></div>
+        <span class="mono" style="font-size:.8rem;color:var(--muted)">702 JPEGs · 128×128 · 23 letters · many have synthetic backgrounds</span>
+      </div>
+    </div>
+
+    <div class="idea">
+      <div class="txt">
+        <h3>The partner's phone becomes the second mic</h3>
+        <p>A single laptop mic picks up both people, which is why the repo needs separate O and P keys. Instead, the partner scans a QR code and opens a <code>/partner</code> page on their own phone. That page has one big hold-to-talk button, which sends audio to the existing <code>/api/partner</code>. It also shows large captions of what the patient says, using <code>/api/history</code>.</p>
+        <p class="why">Why it's easy: Saathi knows who is speaking from which device sent the audio, so the patient never presses a “partner is talking” key. A family member at home can use the same page.</p>
+      </div>
+      <div class="txt">
+        <h3>Voice legacy, with spoken consent</h3>
+        <p>For ALS and Parkinson's, the voice fades over time. Saathi asks for voice banking in week one, while the patient can still read the sample sentences. The recordings are stored but not cloned. When the patient is ready, they say the consent sentence aloud. Scribe checks it against the expected text, and only then can <code>/api/voices/clone</code> run. If there are no usable recordings, Voice Design builds a new voice from age, accent and warmth.</p>
+        <p class="why">This meets the PS's “use only consented voices” rule with a step the patient performs, on top of the consent record the repo already keeps.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">One conversation turn</span>
+  <h2>A turn, end to end</h2>
+  <div class="flow">
+    <div class="step pr"><span class="n">1</span><b>Partner asks</b><p>Holds the button on their phone: <span class="hi">“Thanda ya normal?”</span></p><span class="t">Scribe · target ≤ 600 ms</span></div>
+    <div class="step pr"><span class="n">2</span><b>Saathi shapes</b><p>Classifies the question as a choice and puts the two options on screen, already highlighted.</p><span class="t">rules · target ≤ 30 ms</span></div>
+    <div class="step pt"><span class="n">3</span><b>Patient picks</b><p>Their “my yes” on the highlighted card, or one shake to move to the next card.</p><span class="t">1 action</span></div>
+    <div class="step pt"><span class="n">4</span><b>Saathi speaks</b><p>“Normal, please” in their voice, from cache or Flash v2.5.</p><span class="t">first audio · target ≤ 300 ms</span></div>
+  </div>
+  <p class="col" style="color:var(--muted);font-size:.95rem">These times are targets, not measurements. The PS budget of under 2 s is measured from the end of the patient's input to the first audio. Steps 2 and 4 together are well inside that, so the real risk is Scribe's response time on the venue's network.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Proving it to judges</span>
+  <h2>Measures</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Measure</th><th>How</th><th>Target</th><th>Data label</th></tr></thead>
+      <tbody>
+        <tr><td>WER, voice only</td><td>Scribe batch on TORGO dysarthric clips, by severity</td><td class="num">baseline</td><td>Real</td></tr>
+        <tr><td>WER, fused</td><td>Fused sentence vs reference; ablation adding voice, context, cues, templates, ISL</td><td class="num">lower than voice only</td><td>SIMULATED</td></tr>
+        <tr><td>Intent accuracy</td><td>Top-1 / top-3 on 60+ acted turns in EN/HI/Hinglish</td><td class="num">top-3 ≥ 85%</td><td>SIMULATED (acted)</td></tr>
+        <tr><td>Latency</td><td>Patient commit to first audio, from <code>events</code></td><td class="num">p50 &lt; 1.2 s, p95 &lt; 2 s</td><td>Measured live</td></tr>
+        <tr><td>Effort</td><td>Actions per confirmed message</td><td class="num">≤ 1.3</td><td>Measured live</td></tr>
+        <tr><td>One-action turns (new)</td><td>Share of turns confirmed with a single “my yes”</td><td class="num">≥ 70%</td><td>Measured live</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Build order · about 19 hours</span>
+  <h2>Build plan on the existing repo</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Step</th><th>Work</th><th>Files</th><th>Hours</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Question classifier (yes/no, choice, open; EN + HI markers) and choice-card UI</td><td><code>backend/fusion.py</code>, <code>frontend/js/app.js</code></td><td class="num">3</td></tr>
+        <tr><td class="num">2</td><td>“My yes” calibration: record 3 tries, save per-user threshold, use it for confirm</td><td><code>frontend/js/vision.js</code>, <code>backend/db.py</code> (settings)</td><td class="num">2</td></tr>
+        <tr><td class="num">3</td><td>Condition profiles: onboarding screen, fusion weights and timing per profile</td><td><code>backend/fusion.py</code>, <code>frontend/index.html</code></td><td class="num">3</td></tr>
+        <tr><td class="num">4</td><td>ISL seeding script, dedupe, learn-on-confirm, drop seeds after 3 own samples</td><td>new <code>backend/seed_isl.py</code>, <code>frontend/js/signs.js</code></td><td class="num">3</td></tr>
+        <tr><td class="num">5</td><td>Partner phone page with QR code, hold-to-talk and captions</td><td>new <code>frontend/partner.html</code>, <code>backend/main.py</code></td><td class="num">2</td></tr>
+        <tr><td class="num">6</td><td>Spoken consent check and voice-banking recorder</td><td><code>backend/consent.py</code>, <code>backend/elevenlabs.py</code></td><td class="num">2</td></tr>
+        <tr><td class="num">7</td><td>TORGO baseline, acted sessions, updated ablation report</td><td><code>eval/run_eval.py</code></td><td class="num">4</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="col">
+  <span class="eyebrow">Risks</span>
+  <h2>What could go wrong</h2>
+  <ul class="plain">
+    <li><b>Phone mic needs HTTPS.</b> Browsers allow the mic only on a secure origin, so a plain LAN address won't work on the partner's phone. Serve over a tunnel or local HTTPS. Otherwise keep the phone for captions only.</li>
+    <li><b>Seed features must match live features.</b> The Python seeding script has to reproduce the feature function in <code>vision.js</code> exactly. Add a parity test on one image before seeding.</li>
+    <li><b>The dataset has few signers and synthetic backgrounds.</b> Treat seed accuracy as a rough starting point. Learn-on-confirm is what makes it personal.</li>
+    <li><b>Question detection in Hinglish is rule-based at first.</b> If it guesses wrong, the open-question suggestions are still on screen, so a wrong guess costs one extra action and never blocks a reply.</li>
+    <li><b>Live behaviour is still untested.</b> MediaPipe thresholds and the ElevenLabs endpoints haven't been run on a real machine with a key yet (repo README). Do that first.</li>
+  </ul>
+  <div class="note">Every simulated or acted number keeps a SIMULATED label in file names, database rows and the UI, as the PS and the build guide both require.</div>
+</section>
+
+<footer>Sources: PS16_Voice_Restoration.pdf, VaaniSetu — PS16 Build Guide.pdf, the Saathi repo (backend/, frontend/, eval/), data/ISL_Dataset analysis · 1 Nov 2026</footer>
+
+</div>

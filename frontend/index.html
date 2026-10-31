@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Saathi Voice Assistant</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">◉</span>
+    <div>
+      <h1>Saathi</h1>
+      <p class="sub">Multimodal conversation assistant · PS16</p>
+    </div>
+  </div>
+  <div class="status" id="status" aria-live="polite"></div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="converse" class="active">Converse</button>
+  <button role="tab" data-tab="signs">ISL signs</button>
+  <button role="tab" data-tab="spectro">Spectrogram phrases</button>
+  <button role="tab" data-tab="voice">Voice &amp; consent</button>
+  <button role="tab" data-tab="phrases">Phrasebook</button>
+  <button role="tab" data-tab="metrics">Metrics</button>
+</nav>
+
+<main>
+  <!-- ============================== CONVERSE -->
+  <section id="tab-converse" class="tab active">
+    <div class="grid-converse">
+      <div class="col">
+        <div class="card camera-card">
+          <div class="camera-wrap">
+            <video id="video" playsinline muted></video>
+            <canvas id="overlay"></canvas>
+            <div class="camera-off" id="cameraOff">
+              <button id="startCamera" class="btn primary">Start camera &amp; mic</button>
+              <p class="hint">Hand, face and lip tracking run in your browser. Video never leaves this device.</p>
+            </div>
+          </div>
+          <div class="cue-row" id="cueRow">
+            <span class="chip" id="cueExpr">face: –</span>
+            <span class="chip" id="cueHead">head: –</span>
+            <span class="chip" id="cueThumb">thumb: –</span>
+            <span class="chip" id="cueSign">sign: –</span>
+            <span class="chip" id="cueSyl">syllables: –</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>ISL fingerspelling</h3>
+            <label class="switch"><input type="checkbox" id="signEnabled" checked> recognise signs</label>
+          </div>
+          <div class="spell" id="spellBuffer" aria-live="polite"></div>
+          <div class="row wrap">
+            <button class="btn" id="spellSpace">Space</button>
+            <button class="btn" id="spellBack">⌫</button>
+            <button class="btn" id="spellClear">Clear</button>
+            <button class="btn primary" id="spellSend">Use signs →</button>
+          </div>
+          <div class="chips" id="signPhrases"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Live spectrogram</h3><span class="hint">short-time FFT of the microphone</span></div>
+          <canvas id="liveSpec" class="spec" height="110"></canvas>
+          <div class="spec-compare" id="specCompare" hidden>
+            <div><span class="hint">this utterance</span><canvas id="specInput" class="spec small" height="70"></canvas></div>
+            <div><span class="hint" id="specMatchLabel">best template</span><canvas id="specMatch" class="spec small" height="70"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="card controls">
+          <div class="row wrap">
+            <label>Language
+              <select id="language">
+                <option value="auto">Auto (En / Hi / Hinglish)</option>
+                <option value="eng">English</option>
+                <option value="hin">Hindi</option>
+              </select>
+            </label>
+            <label class="switch"><input type="checkbox" id="useLLM" checked> LLM ranker</label>
+            <label class="switch"><input type="checkbox" id="useScribe" checked> Scribe STT</label>
+            <label class="switch"><input type="checkbox" id="useSpectro" checked> Spectrogram match</label>
+          </div>
+          <div class="talk-buttons">
+            <button class="btn talk partner" id="partnerBtn" aria-pressed="false">
+              <span class="big">🗣</span> Partner speaks <kbd>O</kbd></button>
+            <button class="btn talk patient" id="patientBtn" aria-pressed="false">
+              <span class="big">🎙</span> Patient speaks <kbd>P</kbd></button>
+          </div>
+          <form class="row" id="partnerTextForm">
+            <input id="partnerText" placeholder="…or type what the partner said" autocomplete="off">
+            <button class="btn">Send</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Suggested messages</h3>
+            <span class="hint" id="rankerInfo"></span>
+          </div>
+          <div id="candidates" class="candidates" aria-live="polite">
+            <p class="empty">Speak, sign or gesture. Suggestions appear here.<br>
+              Choose with <kbd>1</kbd>–<kbd>3</kbd>, a click, or 👍 (hold); 👎 moves to the next one.</p>
+          </div>
+          <form class="row" id="customForm">
+            <input id="customText" placeholder="None of these? Type the message" autocomplete="off">
+            <button class="btn">Speak</button>
+          </form>
+          <div class="latency" id="latency"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Conversation</h3><button class="btn ghost" id="newSession">New session</button></div>
+          <ol class="chat" id="chat"></ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== SIGNS -->
+  <section id="tab-signs" class="tab">
+    <div class="grid-2">
+      <div class="card">
+        <h3>Train Indian Sign Language signs</h3>
+        <p class="hint">Static ISL letters (A–Z) and digits, single phrase signs, and control signs
+          (SPACE, DEL, SEND). Hold the sign steady in front of the camera; we capture about 40 frames of hand-landmark
+          features. Record each sign 2–3 times, ideally with slightly different angles. Many ISL letters use both hands,
+          and both are captured.</p>
+        <div class="row wrap">
+          <label>Type
+            <select id="signKind">
+              <option value="letter">Letter / digit</option>
+              <option value="phrase">Phrase sign</option>
+              <option value="control">Control (SPACE / DEL / SEND)</option>
+            </select>
+          </label>
+          <label id="signLabelWrap">Sign <select id="signLabel"></select></label>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="recordSign">Record sign (3 s countdown)</button>
+          <span id="signRecStatus" class="hint"></span>
+        </div>
+        <div class="live-pred">Live prediction: <strong id="livePred">–</strong></div>
+        <p class="hint">The camera is shared with the Converse tab. Start it there first.</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Trained signs</h3><span class="hint" id="signCount"></span></div>
+        <table class="table" id="signTable"><thead><tr><th>Sign</th><th>Type</th><th>Samples</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== SPECTROGRAM PHRASES -->
+  <section id="tab-spectro" class="tab">
+    <div class="grid-2">
+      <div class="card">
+        <h3>Enroll the patient's own pronunciations</h3>
+        <p class="hint">Each recording becomes a spectrogram template (log-mel to MFCC). Live speech is matched with
+          dynamic time warping, which works even when speech is slurred, provided it is <em>consistent</em>. Record each
+          phrase 3 times. This runs locally and costs no ElevenLabs credits.</p>
+        <label>Phrase <select id="tmplPhrase"></select></label>
+        <div class="row">
+          <button class="btn primary" id="tmplRecord" aria-pressed="false">● Record</button>
+          <button class="btn" id="tmplTest" aria-pressed="false">Test match</button>
+        </div>
+        <canvas id="tmplSpec" class="spec" height="90"></canvas>
+        <div id="tmplResult" class="hint"></div>
+      </div>
+      <div class="card">
+        <h3>Templates</h3>
+        <table class="table" id="tmplTable"><thead><tr><th>Phrase</th><th>Lang</th><th>Recordings</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== VOICE & CONSENT -->
+  <section id="tab-voice" class="tab">
+    <div class="grid-2">
+      <div class="card">
+        <h3>Voice</h3>
+        <p>Current voice: <code id="currentVoice">–</code></p>
+        <div id="voiceList"></div>
+        <h4>Design a voice (no recordings needed, works on the free tier)</h4>
+        <form id="designForm" class="stack">
+          <textarea id="designDesc" rows="3" placeholder="e.g. Warm, calm Indian English male voice, late 50s, slightly slow pace, gentle tone"></textarea>
+          <button class="btn primary">Generate previews</button>
+        </form>
+        <div id="designPreviews" class="stack"></div>
+      </div>
+      <div class="card">
+        <h3>Consent for voice cloning</h3>
+        <p class="hint">Cloning needs an active consent record from the voice owner or their guardian. Revoking consent
+          deletes the cloned voice and its cached audio. Instant voice cloning needs a paid ElevenLabs plan.</p>
+        <form id="consentForm" class="stack">
+          <input id="cOwner" placeholder="Voice owner (whose voice)" required>
+          <input id="cSigner" placeholder="Signer's full name" required>
+          <select id="cRel">
+            <option value="self">Signer is the voice owner</option>
+            <option value="guardian">Guardian</option>
+            <option value="legal representative">Legal representative</option>
+            <option value="caregiver">Caregiver</option>
+          </select>
+          <input id="cPurpose" value="assistive communication in this app" required>
+          <blockquote id="cStatement" class="statement"></blockquote>
+          <input id="cSignature" placeholder="Type your full name to sign" required>
+          <label class="switch"><input type="checkbox" id="cAgree"> I have read and agree to the statement above</label>
+          <button class="btn primary">Record consent</button>
+        </form>
+        <h4>Consent records</h4>
+        <div id="consentList"></div>
+        <h4>Clone a consented voice</h4>
+        <form id="cloneForm" class="stack">
+          <select id="cloneConsent"></select>
+          <input id="cloneName" placeholder="Voice name" required>
+          <input id="cloneFiles" type="file" accept="audio/*" multiple required>
+          <button class="btn">Clone voice</button>
+        </form>
+        <h4>Audit log</h4>
+        <ol class="audit" id="auditLog"></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== PHRASEBOOK -->
+  <section id="tab-phrases" class="tab">
+    <div class="card">
+      <div class="card-head">
+        <h3>Phrasebook</h3>
+        <button class="btn" id="precache">Pre-generate audio for all phrases</button>
+      </div>
+      <p class="hint" id="precacheInfo">Audio is generated once per phrase and voice, then stored in the database. Replays cost no credits.</p>
+      <form id="phraseForm" class="row wrap">
+        <input id="pText" placeholder="Phrase text" required>
+        <select id="pLang"><option value="en">English</option><option value="hi">Hindi</option><option value="mixed">Hinglish</option></select>
+        <input id="pCat" placeholder="category" value="general">
+        <input id="pAliases" placeholder="aliases, comma separated">
+        <input id="pKeywords" placeholder="context keywords, comma separated">
+        <label class="switch"><input type="checkbox" id="pEmergency"> emergency</label>
+        <button class="btn primary">Add</button>
+      </form>
+      <table class="table" id="phraseTable"><thead><tr><th>Phrase</th><th>Lang</th><th>Category</th><th>Used</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============================== METRICS -->
+  <section id="tab-metrics" class="tab">
+    <div class="grid-2">
+      <div class="card"><h3>Latency (ms)</h3><div id="mLatency"></div><p class="hint">Target: under 2000 ms from the end of speech to audio.</p></div>
+      <div class="card"><h3>Confirmation effort</h3><div id="mEffort"></div></div>
+      <div class="card"><h3>Cache</h3><div id="mCache"></div></div>
+      <div class="card"><h3>ElevenLabs usage (last 30 days)</h3><div id="mCredits"></div>
+        <p class="hint">Free tier: about 10k credits a month and 2 concurrent requests. Check current numbers on the ElevenLabs pricing page.</p></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
