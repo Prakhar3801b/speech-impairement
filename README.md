@@ -12,7 +12,7 @@ patient confirms in a personalised ElevenLabs voice.
 | Face & head | MediaPipe face blendshapes: expression (smile/frown/pain); head nod/shake; lip-activity syllable count | Browser |
 | Context | Last partner utterance + history + personal phrasebook | Backend |
 | Fusion | Fast path, then weighted heuristic ranker, then optional LLM re-ranker (Claude, structured JSON) | Backend |
-| Voice | ElevenLabs **Flash v2.5** TTS; **Voice Design** (free tier) or consent-gated **Instant Voice Clone** | ElevenLabs API (cached) |
+| Voice | ElevenLabs **Flash v2.5** TTS; ready-made voices (free tier); **Voice Design** or consent-gated **Instant Voice Clone** (paid plans) | ElevenLabs API (cached) |
 
 Video never leaves the browser; only small feature vectors and audio clips are sent to the backend.
 
@@ -128,7 +128,9 @@ non-commercial use with attribution. Check the current pricing page. The app is 
 * every TTS clip and transcript is cached, so repeats are free; **Phrasebook → Pre-generate** spends credits once per phrase;
 * a semaphore limits ElevenLabs calls to `ELEVENLABS_CONCURRENCY` (default 2);
 * Flash v2.5 is the live TTS model, because it costs the fewest credits and has the lowest latency;
-* **Voice Design** works on Free. Cloning is built in, but it needs a paid plan **and** an active consent record;
+* Checked with a live free-tier key: the API only allows ElevenLabs' **ready-made (premade) voices**. Voice Library voices,
+  Voice Design and cloning return "paid plan required". Clio reads the plan and switches those options off, and the
+  Voice tab lists the ready-made voices (default: George). Cloning also needs an active consent record;
 * the Insights tab tracks characters and minutes sent, and minutes saved.
 
 **Keeping Scribe inside the free tier.** Before audio goes to Scribe it passes four cheaper checks:
@@ -187,8 +189,8 @@ clips through Scribe and the spectrogram matcher, and run live sessions with tea
   tracking still needs a run on a real machine, and the expression/nod thresholds will need tuning there.
 * The ISL letter classifier is speaker-specific: you train it in the app, because no pretrained ISL model ships with it. Dynamic
   ISL letters (with movement) are not supported.
-* The ElevenLabs endpoint shapes (Scribe, Voice Design, IVC) follow the public REST API, but have not been exercised with a
-  live key in this environment. Check them on day 0.
+* Scribe, TTS, caching and the plan/voice listing were checked with a live free-tier key. Voice Design and cloning could not
+  be run (paid plans only), so their request shapes are untested.
 * The LLM re-ranker is optional. Measure its latency against the 2 s budget, and set `LLM_TIMEOUT_S` to match.
 * Open-palm and double-eyebrow emergency gestures, nod-to-confirm and auto-scan timing (2 s) need tuning with a real
   camera and the real user. Any ISL sign that is an open palm held still will also trigger the alert after 2.5 s.

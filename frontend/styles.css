@@ -270,3 +270,6 @@ dialog#partnerDialog::backdrop { background: rgba(25, 28, 28, .32); }
 .btn.rec[aria-pressed="true"] { background: #b3261e; color: #fff; }
 .intro-result { margin-top: .75rem; display: flex; flex-direction: column; gap: .5rem; }
 .intro-result .row { margin-top: 0; }
+
+.premade-list { max-height: 320px; overflow-y: auto; margin-bottom: .5rem; }
+.plan-note { color: #8c4a00; }

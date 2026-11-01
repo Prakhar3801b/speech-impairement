@@ -204,8 +204,11 @@
         <h3>Voice</h3>
         <p class="hint">Current voice: <code id="currentVoice">–</code></p>
         <div id="voiceList"></div>
+        <h4>Ready-made voices</h4>
+        <p class="hint">Available on every ElevenLabs plan, including the free tier.</p>
+        <div id="premadeList" class="premade-list"></div>
         <h4>Describe a new voice</h4>
-        <p class="hint">No recordings needed. Works on the ElevenLabs free tier.</p>
+        <p class="hint" id="designNote">No recordings needed.</p>
         <form id="designForm" class="stack">
           <textarea id="designDesc" rows="3" placeholder="e.g. Warm, calm Indian English male voice, late 50s, slightly slow pace, gentle tone" aria-label="Voice description"></textarea>
           <button class="btn filled">Create 3 previews</button>
@@ -216,6 +219,7 @@
         <h3>Use a real person's voice</h3>
         <p class="hint">Copying someone's voice needs their consent, or a guardian's. You can withdraw it at any time,
           which deletes the copied voice.</p>
+        <p class="hint plan-note" id="cloneNote" hidden></p>
         <form id="consentForm" class="stack">
           <label class="field">Whose voice is it?
             <input id="cOwner" placeholder="Full name" required autocomplete="name">

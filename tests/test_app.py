@@ -273,7 +273,8 @@ def test_time_of_day_prior_favours_phrases_said_at_this_hour(tmp_path):
 
 
 def test_partner_phone_feed_and_emergency(client):
-    r = client.post("/api/partner", data={"session_id": "s5", "text": "Are you cold?"}).json()
+    key = client.get("/api/partner/link", params={"session_id": "s5"}).json()["key"]
+    r = client.post("/api/partner", params={"s": "s5", "k": key}, data={"session_id": "s5", "text": "Are you cold?"}).json()
     latest = client.get("/api/partner/latest", params={"session_id": "s5", "after": 0}).json()
     assert latest["turn_id"] == r["turn_id"] and latest["question"]["type"] == "yes_no"
     assert client.get("/api/partner/latest", params={"session_id": "s5", "after": r["turn_id"]}).json() == {}
@@ -331,6 +332,9 @@ def test_partner_link_covers_one_conversation(tmp_path, monkeypatch):
         r = phone.post("/api/partner", params={"s": "s1", "k": key}, data={"session_id": "s1", "text": "Paani chahiye?"})
         assert r.status_code == 200 and r.json()["question"]["type"] == "yes_no"
         assert phone.get("/api/history/s1", params={"s": "s1", "k": key}).json()[0]["text"] == "Paani chahiye?"
+        assert laptop.get("/api/partner/latest", params={"session_id": "s1"}).json()["transcript"] == "Paani chahiye?"
+        laptop.post("/api/partner", data={"session_id": "s1", "text": "typed on the laptop"})
+        assert laptop.get("/api/partner/latest", params={"session_id": "s1"}).json()["transcript"] == "Paani chahiye?"
         assert phone.post("/api/partner", params={"s": "s1", "k": key},
                           data={"session_id": "other", "text": "hi"}).status_code == 403
         assert phone.get("/api/history/s2", params={"s": "s2", "k": key}).status_code == 401
@@ -385,3 +389,11 @@ def test_intro_name_suggestions():
     from backend import intro
     assert intro.suggestions("My name is Ravi. My son Amit lives in Pune.", ["Yes"]) == \
         ["Please call Ravi", "Please call Amit", "Please call Pune"]
+
+
+def test_plan_and_permission_errors_do_not_burn_the_key():
+    from backend.elevenlabs import ElevenLabsError, _quota_error
+    assert not _quota_error(ElevenLabsError(402, {"detail": {"code": "paid_plan_required", "message": "library voice"}}))
+    assert not _quota_error(ElevenLabsError(401, {"detail": {"status": "missing_permissions"}}))
+    assert _quota_error(ElevenLabsError(401, {"detail": {"status": "quota_exceeded"}}))
+    assert _quota_error(ElevenLabsError(402, {"detail": {"message": "insufficient credits"}}))

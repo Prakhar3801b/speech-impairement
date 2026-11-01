@@ -445,7 +445,8 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
         log_latency(session_id, "partner", stages)
         out = {"transcript": partner_text, "suggestions": suggestions, "stt": stt, "latency": stages,
                "question": fusion.question_shape(partner_text), "turn_id": turn_id}
-        partner_latest[session_id] = out
+        if request.query_params.get("k"):   # sent from the partner page (its link carries the key)
+            partner_latest[session_id] = out     # only phone turns: the laptop already shows its own
         return out
 
     @app.get("/api/partner/latest")
@@ -684,15 +685,19 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
 
     # ------------------------------------------------------------ voices & consent
     @app.get("/api/voices")
-    def voices():
+    async def voices():
         rows = db.query("SELECT v.*, c.voice_owner, c.revoked_at FROM voices v "
                         "LEFT JOIN consent_records c ON c.id=v.consent_id WHERE v.deleted_at IS NULL")
-        return {"selected": current_voice(), "default": settings.default_voice_id, "voices": rows}
+        plan = await el.plan() if el.enabled else {"tier": None, "can_design": False, "can_clone": False}
+        premade = await el.premade_voices() if el.enabled else []
+        return {"selected": current_voice(), "default": settings.default_voice_id, "voices": rows,
+                "premade": premade, "plan": plan}
 
 
     @app.post("/api/voices/select")
-    def select_voice(v: SelectVoice):
-        if v.voice_id != settings.default_voice_id:
+    async def select_voice(v: SelectVoice):
+        premade = {p["voice_id"] for p in await el.premade_voices()} if el.enabled else set()
+        if v.voice_id != settings.default_voice_id and v.voice_id not in premade:
             row = db.one("SELECT * FROM voices WHERE voice_id=? AND deleted_at IS NULL", (v.voice_id,))
             if not row:
                 raise HTTPException(404, "unknown or deleted voice")

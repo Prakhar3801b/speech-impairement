@@ -64,7 +64,11 @@ class BudgetExhausted(ElevenLabsError):
 
 
 def _quota_error(e: ElevenLabsError) -> bool:
+    """Out of credits on this key (try the next one). Not: a missing permission, or a feature the
+    plan does not include, e.g. 402 paid_plan_required for library voices on the free tier."""
     text = json.dumps(e.detail).lower() if not isinstance(e.detail, str) else e.detail.lower()
+    if "paid_plan_required" in text or "missing_permissions" in text:
+        return False
     return e.status == 402 or (e.status in (401, 429) and ("quota" in text or "credits" in text))
 
 
@@ -303,6 +307,47 @@ class ElevenLabs:
         return {"audio": audio, "mime": "audio/mpeg", "cached": False}
 
     # ------------------------------------------------------------- voices
+    # ------------------------------------------------------------------ plan and ready-made voices
+    async def plan(self) -> dict:
+        """What the account's plan allows (cached for an hour, shared by all accounts using the keys).
+        The free tier can speak with ready-made voices but cannot design or clone voices via the API."""
+        cache = self.pool.__dict__.setdefault("_plan_cache", {})
+        if cache.get("at", 0) > time.time() - 3600:
+            return cache["plan"]
+        plan = {"tier": None, "can_design": True, "can_clone": True}
+        if self.pool.keys:
+            try:
+                body = (await self._send(self.pool.keys[0], "GET", "/v1/user/subscription")).json()
+                tier = body.get("tier")
+                plan = {"tier": tier, "can_design": tier not in (None, "free"),
+                        "can_clone": bool(body.get("can_use_instant_voice_cloning"))}
+            except (ElevenLabsError, httpx.HTTPError, ValueError):
+                pass    # key without user_read: assume allowed; ElevenLabs reports it if not
+        cache.update(at=time.time(), plan=plan)
+        return plan
+
+    async def premade_voices(self) -> list[dict]:
+        """ElevenLabs' ready-made voices (usable on every plan), cached for a day."""
+        cache = self.pool.__dict__.setdefault("_premade_cache", {})
+        if cache.get("at", 0) > time.time() - 86400:
+            return cache["voices"]
+        voices = []
+        if self.pool.keys:
+            try:
+                body = (await self._send(self.pool.keys[0], "GET", "/v1/voices")).json()
+                for v in body.get("voices", []):
+                    if v.get("category") == "premade":
+                        labels = v.get("labels") or {}
+                        voices.append({"voice_id": v["voice_id"], "name": v.get("name", ""),
+                                       "labels": ", ".join(x for x in (labels.get("gender"), labels.get("age"),
+                                                                        labels.get("accent"), labels.get("description"))
+                                                           if x),
+                                       "preview_url": v.get("preview_url")})
+            except (ElevenLabsError, httpx.HTTPError, ValueError):
+                return []
+        cache.update(at=time.time(), voices=voices)
+        return voices
+
     async def design_previews(self, description: str, sample_text: str | None = None) -> list[dict]:
         """Voice Design: synthetic voice from a text description (no recordings, no consent needed)."""
         if not self.enabled:

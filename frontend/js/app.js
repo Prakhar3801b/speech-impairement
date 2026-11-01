@@ -476,7 +476,21 @@ $('#tmplTest').onclick = () => toggleRecord('test', $('#tmplTest'), async (blob)
 async function loadVoiceTab() {
   const v = await api('/api/voices');
   $('#currentVoice').textContent = v.selected;
-  const items = [{ voice_id: v.default, name: 'Default library voice', kind: 'default' }, ...v.voices];
+  const items = [{ voice_id: v.default, name: 'Default voice', kind: 'default' }, ...v.voices];
+  const premade = v.premade.filter((p) => p.voice_id !== v.default);
+  $('#premadeList').innerHTML = premade.map((p) => `<div class="voice-item"><span><strong>${esc(p.name)}</strong>
+    <span class="hint">${esc(p.labels)}</span></span><span class="row" style="margin:0">
+    ${p.preview_url ? `<button class="btn text" data-preview="${esc(p.preview_url)}" aria-label="Play a sample of ${esc(p.name)}"><span class="icon" aria-hidden="true">play_arrow</span></button>` : ''}
+    <button class="btn" data-voice="${esc(p.voice_id)}" ${p.voice_id === v.selected ? 'disabled' : ''}>${p.voice_id === v.selected ? 'In use' : 'Use'}</button></span></div>`).join('')
+    || '<p class="hint">Add an ElevenLabs key to see the ready-made voices.</p>';
+  document.querySelectorAll('[data-preview]').forEach((b) => b.onclick = () => new Audio(b.dataset.preview).play().catch(() => toast('Could not play the sample')));
+  // Paid-only features are shown but switched off, with the reason, instead of failing later.
+  const freeNote = 'Needs a paid ElevenLabs plan (the free tier can only use the ready-made voices above).';
+  $('#designNote').textContent = v.plan.can_design ? 'No recordings needed.' : freeNote;
+  $('#designForm').querySelectorAll('textarea, button').forEach((el) => { el.disabled = !v.plan.can_design; });
+  $('#cloneNote').hidden = v.plan.can_clone;
+  $('#cloneNote').textContent = 'Copying a voice ' + freeNote.charAt(0).toLowerCase() + freeNote.slice(1)
+    + ' You can still record consent now.';
   $('#voiceList').innerHTML = items.map((x) => `<div class="voice-item"><span><strong>${esc(x.name)}</strong>
     <span class="chip">${x.kind}</span>${x.voice_owner ? ` <span class="hint">consent: ${esc(x.voice_owner)}</span>` : ''}</span>
     <button class="btn" data-voice="${esc(x.voice_id)}" ${x.voice_id === v.selected ? 'disabled' : ''}>${x.voice_id === v.selected ? 'In use' : 'Use'}</button></div>`).join('');

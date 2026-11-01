@@ -29,7 +29,8 @@ class Settings:
     anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
     stt_model: str = os.environ.get("STT_MODEL", "scribe_v1")
     tts_model: str = os.environ.get("TTS_MODEL", "eleven_flash_v2_5")
-    default_voice_id: str = os.environ.get("DEFAULT_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    # A premade voice: the free tier cannot use Voice Library voices through the API.
+    default_voice_id: str = os.environ.get("DEFAULT_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
     elevenlabs_concurrency: int = int(os.environ.get("ELEVENLABS_CONCURRENCY", "2"))
     llm_model: str = os.environ.get("LLM_MODEL", "claude-opus-5-5")
     llm_effort: str = os.environ.get("LLM_EFFORT", "low")
