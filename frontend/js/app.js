@@ -34,12 +34,22 @@ const state = {
   status: null, phrases: [], spelled: '', signPhrases: [],
   candidates: [], selected: 0, shownAt: 0, actions: 0, lastResult: null,
   recMode: null, vision: null, cameraOn: false,
+  signLog: [], lastSignFeatures: null, scanTimer: null, lastPartnerTurn: 0, partnerPoll: null,
 };
 function newSessionId() {
   const id = 's-' + Math.random().toString(36).slice(2, 10);
   try { localStorage.setItem('ps16.session', id); } catch { /* storage unavailable */ }
   return id;
 }
+// Per-device profile from the first-run setup (language, "yes" signal, voice choice).
+const profile = { name: '', lang: 'auto', yes: 'thumbs', voice: 'default', done: false };
+try {   // 'saathi.profile' is the key used before the rename to Clio
+  Object.assign(profile, JSON.parse(localStorage.getItem('clio.profile') || localStorage.getItem('saathi.profile') || '{}'));
+} catch { /* storage unavailable */ }
+function saveProfile() {
+  try { localStorage.setItem('clio.profile', JSON.stringify(profile)); } catch { /* storage unavailable */ }
+}
+
 const recorder = new Recorder();
 const classifier = new SignClassifier();
 
@@ -59,6 +69,8 @@ async function loadStatus() {
     `<span class="chip ${s.llm ? 'on' : 'off'}">LLM: ${s.llm ? 'on' : 'off (heuristic)'}</span>`,
     `<span class="chip">templates: ${s.templates}</span>`,
     `<span class="chip">TTS cache: ${s.cache.tts.n}</span>`,
+    s.elevenlabs ? `<span class="chip ${s.budget.fraction_left < 0.1 ? 'danger' : s.budget.saver_mode ? 'off' : 'on'}"
+      title="${s.budget.keys.length} key(s)${s.budget.saver_mode ? ' · saver mode' : ''}">credits left: ${Math.round(s.budget.fraction_left * 100)}%</span>` : '',
   ].join('');
 }
 
@@ -104,13 +116,14 @@ async function startMedia() {
 }
 
 function requireMic() {
-  if (!recorder.ctx) { toast('Start the camera & mic first (Converse tab)'); return false; }
+  if (!recorder.ctx) { toast('Start the camera & mic first (Talk tab)'); return false; }
   return true;
 }
 
 // ------------------------------------------------------------------ vision frame handling
 const stabilizer = new SignStabilizer(onSignEntered);
 let thumbHold = { dir: null, n: 0, fired: false };
+let lastHead = null, palmSince = 0, lastBrowDouble = 0;
 
 function onVisionFrame(s) {
   $('#cueExpr').textContent = 'face: ' + s.expression;
@@ -121,8 +134,24 @@ function onVisionFrame(s) {
   $('#cueThumb').classList.toggle('on', !!s.thumbs);
   if (state.vision?.utter) $('#cueSyl').textContent = 'syllables: ' + state.vision.utter.syllables;
 
+  // emergency: an open palm held for 2.5 s, or two quick eyebrow raises
+  if ($('#emergencyGestures').checked) {
+    const now = performance.now();
+    palmSince = s.openPalm ? (palmSince || now) : 0;
+    if (palmSince && now - palmSince > 2500) { palmSince = 0; triggerEmergency('open palm'); }
+    if (s.browDouble && s.browDouble !== lastBrowDouble) { lastBrowDouble = s.browDouble; triggerEmergency('double brow raise'); }
+  }
+
+  // nod / shake: confirm / next, edge-triggered (vision keeps the label for 1.5 s)
+  if (profile.yes === 'nod' && s.head !== lastHead) {
+    lastHead = s.head;
+    if (state.candidates.length && s.head === 'nod') { state.actions++; confirmCandidate(state.selected); }
+    if (state.candidates.length && s.head === 'shake') { state.actions++; select((state.selected + 1) % state.candidates.length); }
+  }
+
   // thumbs: confirm / next while suggestions are on screen
-  if (state.candidates.length && s.thumbs) {
+  if (profile.yes !== 'thumbs') { /* thumbs gestures off for this user */ }
+  else if (state.candidates.length && s.thumbs) {
     if (thumbHold.dir === s.thumbs) thumbHold.n++; else thumbHold = { dir: s.thumbs, n: 0, fired: false };
     if (!thumbHold.fired && s.thumbs === 'up' && thumbHold.n > 15) { thumbHold.fired = true; state.actions++; confirmCandidate(state.selected); }
     if (!thumbHold.fired && s.thumbs === 'down' && thumbHold.n > 10) { thumbHold.fired = true; state.actions++; select((state.selected + 1) % state.candidates.length); }
@@ -135,11 +164,17 @@ function onVisionFrame(s) {
   if ($('#tab-signs').classList.contains('active')) {
     $('#livePred').textContent = pred ? `${pred.label} (${(pred.confidence * 100) | 0}%, d=${pred.distance.toFixed(2)}${pred.known ? '' : ', unknown'})` : '–';
   }
+  if (pred?.known) state.lastSignFeatures = s.features;
   if ($('#signEnabled').checked && !signCapture.active) stabilizer.push(pred);
   if (signCapture.active && s.features) signCapture.push(s.features);
 }
 
 function onSignEntered(pred) {
+  // remembered so a confirmed message can teach the classifier these exact hand shapes
+  if (state.lastSignFeatures && pred.kind !== 'control') {
+    state.signLog.push({ label: pred.label, kind: pred.kind,
+      phrase_id: pred.phrase_id || null, features: state.lastSignFeatures });
+  }
   if (pred.kind === 'letter') state.spelled += pred.label;
   else if (pred.kind === 'control') {
     if (pred.label === 'SPACE') state.spelled += ' ';
@@ -162,7 +197,7 @@ function renderSpell() {
 }
 $('#spellSpace').onclick = () => { state.spelled += ' '; renderSpell(); };
 $('#spellBack').onclick = () => { state.spelled = state.spelled.slice(0, -1); renderSpell(); };
-$('#spellClear').onclick = () => { state.spelled = ''; state.signPhrases = []; renderSpell(); };
+$('#spellClear').onclick = () => { state.spelled = ''; state.signPhrases = []; state.signLog = []; renderSpell(); };
 $('#spellSend').onclick = () => sendPatient(null);
 
 // ------------------------------------------------------------------ recording controls
@@ -202,7 +237,9 @@ document.addEventListener('keydown', (e) => {
   else if (['1', '2', '3'].includes(k) && state.candidates[+k - 1]) { state.actions++; confirmCandidate(+k - 1); }
   else if ((k === 'arrowdown' || k === 'arrowright') && state.candidates.length) { e.preventDefault(); state.actions++; select((state.selected + 1) % state.candidates.length); }
   else if ((k === 'arrowup' || k === 'arrowleft') && state.candidates.length) { e.preventDefault(); state.actions++; select((state.selected - 1 + state.candidates.length) % state.candidates.length); }
-  else if (k === 'enter' && state.candidates.length) { e.preventDefault(); state.actions++; confirmCandidate(state.selected); }
+  else if ((k === 'enter' || (k === ' ' && profile.yes === 'scan')) && state.candidates.length) {
+    e.preventDefault(); state.actions++; confirmCandidate(state.selected);
+  }
 });
 
 // ------------------------------------------------------------------ turns
@@ -222,8 +259,9 @@ async function sendPartner({ blob, text }) {
   try {
     const r = await api('/api/partner', { method: 'POST', body: fd });
     if (!r.transcript) { toast(r.note || 'No transcript', 5000); return; }
+    state.lastPartnerTurn = Math.max(state.lastPartnerTurn, r.turn_id || 0);
     addChat('partner', r.transcript, r.stt?.cached ? 'cached STT' : '');
-    showCandidates(r.suggestions, { ranker: 'reply suggestions', latency: r.latency });
+    showCandidates(r.suggestions, { ranker: 'reply suggestions', latency: r.latency, question: r.question });
   } catch (e) { toast('Partner turn failed: ' + e.message, 5000); }
 }
 
@@ -241,7 +279,10 @@ async function sendPatient(blob, cues) {
   try {
     const r = await api('/api/patient', { method: 'POST', body: fd });
     state.lastResult = r;
-    showCandidates(r.candidates, { ranker: r.ranker, latency: r.latency, transcript: r.transcript });
+    showCandidates(r.candidates, { ranker: r.ranker, latency: r.latency, transcript: r.transcript,
+      note: r.stt?.skipped ? 'Scribe skipped: ' + r.stt.skipped : r.stt?.cached === 'fuzzy' ? 'transcript re-used'
+        : r.stt?.budget === 'exhausted' ? 'Scribe credits used up' : '' });
+    if (r.stt?.budget === 'exhausted') loadStatus();
     showSpectrogramCompare(r);
   } catch (e) { toast('Patient turn failed: ' + e.message, 5000); $('#rankerInfo').textContent = ''; }
 }
@@ -261,8 +302,17 @@ async function showSpectrogramCompare(r) {
 function showCandidates(cands, meta) {
   state.candidates = cands || []; state.selected = 0; state.shownAt = performance.now(); state.actions = 0;
   const box = $('#candidates');
-  $('#rankerInfo').textContent = meta.ranker ? `ranker: ${meta.ranker}` + (meta.transcript ? ` · heard: “${meta.transcript}”` : '') : '';
-  if (!state.candidates.length) { box.innerHTML = '<p class="empty">No suggestions. Try again or type the message below.</p>'; }
+  // auto-scan: the highlight steps through the suggestions; one key or switch press picks it
+  clearInterval(state.scanTimer);
+  box.classList.toggle('scanning', profile.yes === 'scan' && state.candidates.length > 1);
+  if (profile.yes === 'scan' && state.candidates.length > 1) {
+    state.scanTimer = setInterval(() => select((state.selected + 1) % state.candidates.length), 2000);
+  }
+  // yes/no and either/or questions: the first two cards are the answers, shown side by side
+  box.classList.toggle('binary', ['yes_no', 'choice'].includes(meta.question?.type) && state.candidates.length >= 2);
+  $('#rankerInfo').textContent = meta.ranker ? `ranker: ${meta.ranker}` + (meta.transcript ? ` · heard: “${meta.transcript}”` : '')
+    + (meta.note ? ` · ${meta.note}` : '') : '';
+  if (!state.candidates.length) { box.innerHTML = `<p class="empty">${meta.ranker ? 'No suggestions. Try again or type the message below.' : emptyHint()}</p>`; }
   else {
     box.innerHTML = state.candidates.map((c, i) => {
       const p = state.phrases.find((x) => x.id === c.phrase_id);
@@ -293,10 +343,12 @@ async function confirmCandidate(i, customText) {
   const elapsed = performance.now() - state.shownAt;
   const rank = customText ? -1 : i;
   const raw = state.lastResult?.transcript || '';
+  clearInterval(state.scanTimer); $('#candidates').classList.remove('scanning', 'binary');
   state.candidates = [];
+  learnSigns(c);
   $('#candidates').innerHTML = `<p class="empty">Speaking: “${esc(c.text)}”</p>`;
   addChat('patient', c.text, (c.sources || []).join(', '));
-  state.spelled = ''; state.signPhrases = []; renderSpell();
+  state.spelled = ''; state.signPhrases = []; state.signLog = []; renderSpell();
   api('/api/confirm', { json: { session_id: state.session, text: c.text, phrase_id: c.phrase_id, rank,
     actions: Math.max(1, state.actions), time_to_confirm_ms: elapsed, sources: c.sources || [], raw_text: raw,
     ranker: $('#rankerInfo').textContent } }).catch((e) => console.warn(e));
@@ -352,7 +404,7 @@ function populateSignLabels() {
 $('#signKind').onchange = populateSignLabels;
 
 $('#recordSign').onclick = async () => {
-  if (!state.vision) { toast('Start the camera on the Converse tab first'); return; }
+  if (!state.vision) { toast('Start the camera on the Talk tab first'); return; }
   const kind = $('#signKind').value, raw = $('#signLabel').value;
   const label = kind === 'phrase' ? state.phrases.find((p) => p.id === +raw)?.text : raw;
   const btn = $('#recordSign'); btn.disabled = true;
@@ -445,21 +497,34 @@ async function loadVoiceTab() {
   updateStatement();
 }
 
-async function updateStatement() {
-  const q = new URLSearchParams({ owner: $('#cOwner').value || '[owner]', signer: $('#cSigner').value || '[signer]',
-    relationship: $('#cRel').value, purpose: $('#cPurpose').value || '[purpose]' });
-  $('#cStatement').textContent = (await api('/api/consent/statement?' + q)).statement;
+// One-screen consent: the owner signs for themself, or a family member / guardian signs for them.
+// Pressing "I agree" after reading the statement is the agreement; the signer's name is typed once.
+function consentFields() {
+  const self = document.querySelector('input[name="cWho"]:checked').value === 'self';
+  const owner = $('#cOwner').value.trim();
+  return { owner, self, signer: self ? owner : $('#cSigner').value.trim(), relationship: self ? 'self' : $('#cRel').value };
 }
-['#cOwner', '#cSigner', '#cRel', '#cPurpose'].forEach((s) => $(s).addEventListener('input', updateStatement));
+
+async function updateStatement() {
+  const f = consentFields();
+  $('#cOtherFields').hidden = f.self;
+  $('#cSigner').required = !f.self;
+  const q = new URLSearchParams({ owner: f.owner || '[name]', signer: f.signer || (f.self ? '[name]' : '[your name]'),
+    relationship: f.relationship, purpose: $('#cPurpose').value });
+  try { $('#cStatement').textContent = (await api('/api/consent/statement?' + q)).statement; } catch { /* shown on submit */ }
+}
+['#cOwner', '#cSigner', '#cRel'].forEach((s) => $(s).addEventListener('input', updateStatement));
+document.querySelectorAll('input[name="cWho"]').forEach((r) => r.addEventListener('change', updateStatement));
 
 $('#consentForm').onsubmit = async (e) => {
   e.preventDefault();
+  const f = consentFields();
   const fd = new FormData();
-  fd.append('voice_owner', $('#cOwner').value); fd.append('signer', $('#cSigner').value);
-  fd.append('relationship', $('#cRel').value); fd.append('purpose', $('#cPurpose').value);
-  fd.append('typed_signature', $('#cSignature').value); fd.append('agreed', $('#cAgree').checked);
-  try { await api('/api/consent', { method: 'POST', body: fd }); toast('Consent recorded'); e.target.reset(); loadVoiceTab(); }
-  catch (err) { toast('Consent rejected: ' + err.message, 5000); }
+  fd.append('voice_owner', f.owner); fd.append('signer', f.signer);
+  fd.append('relationship', f.relationship); fd.append('purpose', $('#cPurpose').value);
+  fd.append('typed_signature', f.signer); fd.append('agreed', true);
+  try { await api('/api/consent', { method: 'POST', body: fd }); toast('Consent saved'); e.target.reset(); await loadVoiceTab(); }
+  catch (err) { toast('Consent not saved: ' + err.message, 5000); }
 };
 
 $('#cloneForm').onsubmit = async (e) => {
@@ -479,9 +544,10 @@ $('#designForm').onsubmit = async (e) => {
     const r = await api('/api/voices/design', { json: { description } });
     $('#designPreviews').innerHTML = r.previews.map((p, i) => `<div class="voice-item">
       <audio controls src="data:${p.media_type};base64,${p.audio_base64}"></audio>
-      <button class="btn primary" data-gen="${esc(p.generated_voice_id)}">Use preview ${i + 1}</button></div>`).join('');
+      <button class="btn primary" data-gen="${esc(p.generated_voice_id)}" data-key="${esc(p.key_id || '')}">Use preview ${i + 1}</button></div>`).join('');
     document.querySelectorAll('[data-gen]').forEach((b) => b.onclick = async () => {
-      await api('/api/voices/design/save', { json: { generated_voice_id: b.dataset.gen, name: 'Designed voice', description } });
+      await api('/api/voices/design/save', { json: { generated_voice_id: b.dataset.gen, name: 'Designed voice', description,
+        key_id: b.dataset.key || null } });
       toast('Designed voice saved and selected'); $('#designPreviews').innerHTML = ''; loadVoiceTab();
     });
   } catch (err) { $('#designPreviews').innerHTML = ''; toast('Voice Design failed: ' + err.message, 6000); }
@@ -535,12 +601,137 @@ async function loadMetrics() {
   $('#mCache').innerHTML = kv({ 'TTS clips': m.cache.tts.n, 'TTS replays served from cache': m.cache.tts.hits,
     'TTS cache size (KB)': Math.round(m.cache.tts.bytes / 1024), 'transcripts': m.cache.stt.n, 'STT cache hits': m.cache.stt.hits });
   $('#mCredits').innerHTML = kv({ 'TTS characters sent': m.credits.tts_chars, 'STT minutes sent': m.credits.stt_minutes,
-    'Voice Design calls': m.credits.voice_designs });
+    'STT minutes saved (re-used, skipped, trimmed)': m.credits.stt_minutes_saved, 'Scribe calls skipped': m.credits.stt_calls_skipped,
+    'Voice Design calls': m.credits.voice_designs })
+    + (m.budget.keys.length ? `<h4>API keys</h4><div class="table-wrap"><table class="table"><tr><th>key</th><th>used</th><th>limit</th><th>left</th><th></th></tr>
+      ${m.budget.keys.map((k) => `<tr><td><code>${esc(k.key_id)}</code></td><td>${k.used}</td><td>${k.limit}${k.synced ? '' : ' (est.)'}</td>
+        <td>${k.remaining}</td><td>${k.exhausted ? '<span class="chip danger">used up</span>' : ''}</td></tr>`).join('')}</table></div>
+      ${m.budget.saver_mode ? '<p class="hint">Saver mode: Scribe is skipped whenever a recorded phrase matches clearly.</p>' : ''}` : '');
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ------------------------------------------------------------------ learn signs from confirmed messages
+// When a confirmed message used fingerspelling or a phrase sign, the hand shapes seen for those signs
+// become extra training samples (marked "learned"; the server keeps only the newest 40 per sign).
+function learnSigns(c) {
+  const used = (c.sources || []).some((s) => s.startsWith('isl-spelling') || s === 'sign');
+  const log = state.signLog; state.signLog = [];
+  if (!used || !log.length) return;
+  const groups = {};
+  for (const e of log) (groups[e.label] ||= { ...e, samples: [] }).samples.push(e.features);
+  Promise.all(Object.values(groups).map((g) => api('/api/signs', { json: {
+    label: g.label, kind: g.kind, phrase_id: g.phrase_id, samples: g.samples, learned: true } })))
+    .then(reloadClassifier).catch((e) => console.warn('sign learning failed', e));
+}
+
+// ------------------------------------------------------------------ emergency
+let emergencyAt = 0;
+async function triggerEmergency(trigger) {
+  if (performance.now() - emergencyAt < 10000 && !$('#emergency').hidden) return;   // already showing
+  emergencyAt = performance.now();
+  const fd = new FormData(); fd.append('session_id', state.session); fd.append('trigger', trigger);
+  let text = 'I need help now';
+  try { text = (await api('/api/emergency', { method: 'POST', body: fd })).text; } catch { /* still alert */ }
+  $('#emergencyText').textContent = text;
+  $('#emergency').hidden = false; $('#emergencyDismiss').focus();
+  addChat('patient', text, 'emergency · ' + trigger);
+  speak(text);
+}
+$('#helpBtn').onclick = () => triggerEmergency('button');
+$('#emergencyDismiss').onclick = () => { $('#emergency').hidden = true; };
+
+// ------------------------------------------------------------------ partner phone
+async function openPartnerPhone() {
+  const { addresses } = await api('/api/lan').catch(() => ({ addresses: [] }));
+  const host = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? addresses[0] : location.hostname;
+  const url = `${location.protocol}//${host || location.hostname}:${location.port || (location.protocol === 'https:' ? 443 : 80)}/partner.html?s=${encodeURIComponent(state.session)}`;
+  $('#partnerUrl').textContent = url;
+  $('#partnerNote').textContent = (!host ? 'No network address found: start the server with --host 0.0.0.0. ' : '')
+    + (location.protocol !== 'https:' ? 'Over plain http the phone can show captions and take typed words; its microphone needs https.' : '');
+  $('#partnerQr').innerHTML = '';
+  try {
+    if (!window.QRCode) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+    new window.QRCode($('#partnerQr'), { text: url, width: 200, height: 200 });
+  } catch { $('#partnerQr').hidden = true; }
+  $('#partnerDialog').showModal();
+  startPartnerFeed();
+}
+function loadScript(src) {
+  return new Promise((ok, fail) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = fail; document.head.appendChild(el); });
+}
+// Turns spoken on the partner's phone arrive here: poll the server for the session's latest partner turn.
+function startPartnerFeed() {
+  if (state.partnerPoll) return;
+  state.partnerPoll = setInterval(async () => {
+    try {
+      const r = await api(`/api/partner/latest?session_id=${encodeURIComponent(state.session)}&after=${state.lastPartnerTurn}`);
+      if (!r.turn_id) return;
+      state.lastPartnerTurn = r.turn_id;
+      addChat('partner', r.transcript, 'partner phone');
+      showCandidates(r.suggestions, { ranker: 'reply suggestions', latency: r.latency, question: r.question });
+    } catch { /* server restarting; try again next tick */ }
+  }, 1500);
+}
+$('#partnerPhone').onclick = openPartnerPhone;
+$('#closePartner').onclick = () => $('#partnerDialog').close();
+$('#copyPartnerUrl').onclick = () => navigator.clipboard?.writeText($('#partnerUrl').textContent)
+  .then(() => toast('Link copied')).catch(() => toast('Copy the link from the box'));
+
+// ------------------------------------------------------------------ first-run setup
+function emptyHint() {
+  const how = { nod: 'nod to choose, shake your head for the next one',
+    thumbs: 'hold a thumbs up to choose, thumbs down for the next one',
+    tap: 'click one, or press 1–3 or Enter',
+    scan: 'press Space, Enter or your switch when the right one is highlighted' }[profile.yes];
+  return `Speak, sign or gesture. Suggestions appear here. Then ${how}.`;
+}
+
+function applyProfile() {
+  $('#language').value = profile.lang;
+  $('#greeting').textContent = profile.name ? `Hello, ${profile.name}` : 'Conversation assistant';
+  if (!state.candidates.length) $('#candidates').innerHTML = `<p class="empty">${emptyHint()}</p>`;
+}
+
+const setup = { step: 0, last: 2 };
+function showStep(n) {
+  setup.step = n;
+  document.querySelectorAll('#setup .step').forEach((s) => { s.hidden = +s.dataset.step !== n; });
+  document.querySelectorAll('#setup .steps i').forEach((d, i) => d.classList.toggle('on', i <= n));
+  $('#setupBack').hidden = n === 0;
+  $('#setupNext').textContent = n === setup.last ? 'Start talking' : 'Next';
+}
+function openSetup() {
+  $('#sName').value = profile.name;
+  for (const [name, v] of [['sLang', profile.lang], ['sYes', profile.yes], ['sVoice', profile.voice]]) {
+    const r = document.querySelector(`input[name="${name}"][value="${v}"]`); if (r) r.checked = true;
+  }
+  showStep(0); $('#setup').showModal();
+}
+async function finishSetup(skipped) {
+  const pick = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
+  if (!skipped) {
+    profile.name = $('#sName').value.trim();
+    profile.lang = pick('sLang') || 'auto'; profile.yes = pick('sYes') || 'thumbs'; profile.voice = pick('sVoice') || 'default';
+  }
+  profile.done = true; saveProfile(); applyProfile();
+  $('#setup').close();
+  if (skipped) return;
+  if (profile.voice !== 'default') {           // voice choices continue on the Voice tab
+    document.querySelector('.tabs [data-tab="voice"]').click();
+    if (profile.voice === 'own') { $('#consentCard').scrollIntoView({ block: 'start' }); $('#cOwner').value = profile.name; updateStatement(); }
+    else $('#designDesc').focus();
+  } else if (!recorder.ctx) startMedia();     // this click is the user gesture getUserMedia needs
+}
+$('#setupNext').onclick = () => (setup.step === setup.last ? finishSetup(false) : showStep(setup.step + 1));
+$('#setupBack').onclick = () => showStep(Math.max(0, setup.step - 1));
+$('#setupSkip').onclick = () => finishSetup(true);
+$('#openSetup').onclick = openSetup;
+
 // ------------------------------------------------------------------ boot
+applyProfile();
+startPartnerFeed();   // picks up turns spoken on the partner's phone
+if (!profile.done) openSetup();
 (async () => {
   try {
     await Promise.all([loadStatus(), loadPhraseCache(), reloadClassifier()]);

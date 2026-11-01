@@ -1,4 +1,4 @@
-# Saathi: multimodal conversation assistant for people with speech impairments (PS16)
+# Clio: multimodal conversation assistant for people with speech impairments (PS16)
 
 Prototype for **AI Manthan 2.0, Problem Statement 16**. The app listens to the conversation partner and to the patient,
 and watches the patient's hands and face. It combines everything into 3 suggested messages, and speaks the one the
@@ -32,13 +32,31 @@ and speech output falls back to the browser's speech synthesis. Without Scribe, 
 The browser loads MediaPipe from `cdn.jsdelivr.net` and the models from `storage.googleapis.com`.
 
 ### Demo flow
-1. **Converse → Start camera & mic.**
-2. **Spectrogram phrases:** pick a phrase and record it 3 times in the patient's own voice.
-3. **ISL signs:** record letters (A–Z, 0–9), a few phrase signs (e.g. an emergency "help" sign) and the controls
-   SPACE / DEL / SEND. Use 2–3 recordings per sign.
-4. **Converse:** press **O** (or 🗣) while the partner talks; suggested replies appear immediately. Press **P** (or 🎙)
-   while the patient speaks, signs or nods. Choose with **1–3**, a click, **Enter**, or by holding 👍 (👎 moves to the next suggestion).
-5. **Metrics:** latency per stage (p50/p95), confirmation effort, cache hits and ElevenLabs usage.
+1. **Setup** (opens on first visit, 3 steps): name and language; how the patient says "yes" (nod, thumbs up,
+   tap/key, or auto-scan); which voice to use. "Start talking" turns on the camera and microphone.
+2. **Talk:** press **O** while the partner talks, or let the partner use their phone (below). Suggested replies appear
+   at once. For yes/no and either/or questions ("Paani thanda ya normal?") the two answers are big cards side by side.
+   Press **P** while the patient speaks, signs or nods. Choose with the "yes" movement from setup, **1–3**, a click or **Enter**.
+3. **Teach phrases / Teach signs** (optional): record a phrase 3 times, or a sign 2–3 times. You can also skip this,
+   because Clio learns from use: every confirmed spoken phrase becomes one more template for that phrase (up to 4 learned
+   per phrase), and the hand shapes of confirmed signs become extra sign samples (up to 40 learned per sign).
+4. **Help:** the red Help button, an open palm held to the camera for 2.5 s, or two quick eyebrow raises show a
+   full-screen alert and speak the emergency phrase. The gestures can be switched off under Talk → Options.
+5. **Insights:** latency per stage (p50/p95), confirmation effort, cache hits, credits per API key and minutes saved.
+
+### Partner's phone
+Talk → Conversation → **Partner phone** shows a QR code. The partner's phone gets a hold-to-talk button and large
+captions of what the patient says; turns spoken there show up on the laptop with reply suggestions.
+* Start the server with `--host 0.0.0.0` so the phone can reach it, and keep both devices on the same Wi-Fi.
+* Phones only allow the microphone on **https**. Over plain http the phone still shows captions and accepts typed words.
+  For the microphone, serve over https (for example `uvicorn ... --ssl-keyfile key.pem --ssl-certfile cert.pem`, or a tunnel).
+* The API has no login. Only expose it on a network you trust, and stop the server after the session.
+
+### Suggestions that fit the moment
+* **Question-shaped:** yes/no questions answer Yes/No (Haan/Nahi for Hindi); either/or questions offer the two options
+  in the partner's own words.
+* **Time of day:** phrases the patient says at this time of day (night, morning, afternoon, evening) rank higher,
+  once they have been said there at least twice.
 
 ## Architecture
 
@@ -73,7 +91,22 @@ non-commercial use with attribution. Check the current pricing page. The app is 
 * a semaphore limits ElevenLabs calls to `ELEVENLABS_CONCURRENCY` (default 2);
 * Flash v2.5 is the live TTS model, because it costs the fewest credits and has the lowest latency;
 * **Voice Design** works on Free. Cloning is built in, but it needs a paid plan **and** an active consent record;
-* the Metrics tab tracks characters and minutes sent.
+* the Insights tab tracks characters and minutes sent, and minutes saved.
+
+**Keeping Scribe inside the free tier.** Before audio goes to Scribe it passes four cheaper checks:
+1. *Exact cache*: the same audio bytes are never transcribed twice.
+2. *Skip on a clear local match*: the patient's speech is first matched against their recorded phrases
+   (spectrogram + DTW, free). If one phrase matches with confidence of at least `SKIP_STT_CONFIDENCE`, Scribe is not called.
+   In saver mode (under `SAVER_MODE_BELOW` credits left) the bar drops to 0.6.
+3. *Near-identical clip*: each transcribed clip keeps an MFCC fingerprint. A new clip within `STT_REUSE_MAX_DIST`
+   (DTW) of an earlier one, and clearly closer to it than to any clip with a different text, re-uses that transcript.
+4. *Trim and cap*: silence is cut from both ends and clips are capped at `MAX_STT_SECONDS`, so fewer seconds are billed.
+
+**Several keys.** Put extra keys in `ELEVENLABS_API_KEYS` (comma separated). Keys are used in order; a key is skipped
+when its estimated use reaches its limit or when ElevenLabs reports its quota as used up. Use is estimated locally and
+corrected from `GET /v1/user/subscription` when the key can read it. A designed or cloned voice belongs to one account,
+so speech in that voice always uses that account's key. When every key is out, speech falls back to the browser's
+voice and the partner's words can be typed. Keys are never stored; the database keeps only a short hash of each.
 
 ### Consent (cloning)
 `POST /api/voices/clone` refuses (403) unless it references an active consent record. To create one, the signer must
@@ -85,6 +118,16 @@ Revoking consent deletes the voice at ElevenLabs and its cached audio. Every act
 python -m eval.run_eval      # writes eval/reports/results.{md,json}
 python -m pytest -q          # unit + API tests (mock mode)
 ```
+**Real recordings (TORGO, UA-Speech, your own clips):**
+```bash
+python -m eval.run_wer path/to/TORGO --max 40 --dry-run   # counts clips and audio minutes, sends nothing
+python -m eval.run_wer path/to/TORGO --max 40              # writes eval/reports/real_wer.{md,json}
+```
+It reads TORGO's layout (`Speaker/Session/wav_*/0001.wav` with `prompts/0001.txt`) or a transcript next to each clip,
+skips prompts that are not read speech, reports dysarthric and control speakers separately, and lists the clips
+Scribe gets most wrong. Requests go through the same budget and caches as the app, so re-runs are free; transcript
+re-use between similar clips is switched off here so the numbers measure Scribe itself.
+
 `eval/run_eval.py` runs an ablation of the fusion ranker on a **SIMULATED** dataset. The dysarthric ASR errors, cues,
 ISL spelling and template scores are all synthetic, generated at 3 severities. Current output
 (see `eval/reports/results.md`):
@@ -109,3 +152,11 @@ clips through Scribe and the spectrogram matcher, and run live sessions with tea
 * The ElevenLabs endpoint shapes (Scribe, Voice Design, IVC) follow the public REST API, but have not been exercised with a
   live key in this environment. Check them on day 0.
 * The LLM re-ranker is optional. Measure its latency against the 2 s budget, and set `LLM_TIMEOUT_S` to match.
+* Open-palm and double-eyebrow emergency gestures, nod-to-confirm and auto-scan timing (2 s) need tuning with a real
+  camera and the real user. Any ISL sign that is an open palm held still will also trigger the alert after 2.5 s.
+* Scribe credit cost per minute (`STT_CREDITS_PER_MINUTE`) is an estimate, and the transcript re-use distance
+  (`STT_REUSE_MAX_DIST`) was tuned on synthetic audio. Check both against real speech and your plan.
+* Live (streaming) Scribe is not used: streamed audio cannot be cached or re-used, so it would spend the free-tier
+  minutes much faster. Recognition runs when a turn ends.
+* Not built yet: seeding the sign classifier from `data/ISL_Dataset` (needs MediaPipe for Python, which is not installed
+  in this environment), expressive v3 speech from facial affect, spoken consent, and several patient profiles per device.

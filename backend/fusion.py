@@ -143,6 +143,7 @@ class Weights:
     lip: float = 0.15
     frequency: float = 0.1
     language: float = 0.1
+    time: float = 0.25        # said at this time of day before (see Database.phrase_time_prior)
 
 
 # ------------------------------------------------------------------ fast path
@@ -240,6 +241,7 @@ def heuristic_rank(inp: FusionInput, phrases: list[dict], top_k: int = 3,
         if cue.syllables and (inp.asr_text or tmpl):
             s += w.lip * math.exp(-abs(cue.syllables - estimate_syllables(p["text"])) / 2.0)
         s += w.frequency * p.get("use_count", 0) / max_use
+        s += w.time * p.get("time_prior", 0.0)
         lang = {"eng": "en", "hin": "hi"}.get(inp.language)
         if lang and p["language"] in (lang, "mixed"):
             s += w.language
@@ -260,15 +262,7 @@ def heuristic_rank(inp: FusionInput, phrases: list[dict], top_k: int = 3,
 
     out.sort(key=lambda t: -t[0])
     out = _dedupe([c for _, c in out])[:top_k]
-    # softmax-ish confidences over the shortlist
-    if out:
-        scores = [c["score"] for c in out]
-        mx = max(scores)
-        exps = [math.exp(3.0 * (s - mx)) for s in scores]
-        total = sum(exps)
-        for c, e in zip(out, exps):
-            c["confidence"] = round(e / total, 3)
-    return out
+    return _softmax_confidence(out)   # softmax-ish confidences over the shortlist
 
 
 def _dedupe(cands: list[dict]) -> list[dict]:
@@ -281,8 +275,58 @@ def _dedupe(cands: list[dict]) -> list[dict]:
     return out
 
 
+_FILLERS = {"chahiye", "chaiye", "hai", "hain", "lenge", "loge", "logi", "lena", "please", "pasand",
+             "karoge", "karogi", "karenge", "doon", "du", "de", "do", "na", "now", "today", "then"}
+
+
+def choice_options(text: str) -> list[str]:
+    """Pull the two options out of an either/or question.
+
+    'Paani thanda ya normal?' -> ['Thanda', 'Normal']; 'Hot water or cold water?' -> ['Hot water',
+    'Cold water']. The right-hand option sets how many words to take from the left."""
+    parts = re.split(r"\s+(?:or|ya)\s+", normalize(text))
+    if len(parts) != 2:
+        return []
+    strip = lambda ws: ws[: next((i for i in range(len(ws), 0, -1) if ws[i - 1] not in _FILLERS), 0)]  # noqa: E731
+    left, right = strip(parts[0].split()), strip(parts[1].split())
+    if not left or not right or len(right) > 3:
+        return []
+    left = left[-len(right):]
+    if _AUX_START.match(" ".join(left)) or _WH.search(" ".join(left)):
+        return []
+    return [" ".join(left).capitalize(), " ".join(right).capitalize()]
+
+
+def question_shape(text: str) -> dict:
+    """What kind of answer the partner's words call for: yes_no, choice (with its options) or open."""
+    options = choice_options(text) if _CHOICE.search(normalize(text)) else []
+    if options:
+        return {"type": "choice", "options": options}
+    if is_yes_no_question(text):
+        hindi = looks_hindi(text) or bool(re.search(r"\b(kya|chahiye|hai)\b", normalize(text)))
+        return {"type": "yes_no", "options": ["Haan", "Nahi"] if hindi else ["Yes", "No"]}
+    return {"type": "open", "options": []}
+
+
+def _softmax_confidence(cands: list[dict], sharpness: float = 3.0) -> list[dict]:
+    if cands:
+        mx = max(c["score"] for c in cands)
+        exps = [math.exp(sharpness * (c["score"] - mx)) for c in cands]
+        for c, e in zip(cands, exps):
+            c["confidence"] = round(e / sum(exps), 3)
+    return cands
+
+
 def suggest_replies(partner_text: str, phrases: list[dict], top_k: int = 4) -> list[dict]:
-    """Precompute likely patient replies as soon as the partner finishes speaking."""
+    """Precompute likely patient replies as soon as the partner finishes speaking.
+
+    Yes/no and either/or questions put their own answers first (two big cards in the UI,
+    so the patient answers with one action); open questions rank the phrasebook."""
+    shape = question_shape(partner_text)
+    shaped = []
+    for opt in shape["options"]:   # speak the option as worded; link a phrase only when the text is the same
+        p = next((q for q in phrases if normalize(q["text"]) == normalize(opt)), None)
+        shaped.append(_cand(opt, 0, ["question:" + shape["type"]], p))
     partner = normalize(partner_text)
     max_use = max((q.get("use_count", 0) for q in phrases), default=0) or 1
     hindi = looks_hindi(partner_text)
@@ -299,6 +343,12 @@ def suggest_replies(partner_text: str, phrases: list[dict], top_k: int = 4) -> l
         if hindi and p["language"] in ("hi", "mixed"):
             s += 0.3
         s += 0.2 * p.get("use_count", 0) / max_use
+        s += 0.3 * p.get("time_prior", 0.0)
         ranked.append((s, p))
     ranked.sort(key=lambda t: -t[0])
-    return [_cand(p["text"], 0, ["context"], p, score=s) for s, p in ranked[:top_k] if s > 0]
+    rest = [_cand(p["text"], 0, ["context"], p, score=s) for s, p in ranked[: top_k + 2] if s > 0]
+    lead = (rest[0]["score"] if rest else 0.0) + 0.5        # the question's own answers always rank first
+    for c in shaped:
+        c["score"] = round(lead, 4)
+    out = _dedupe(shaped + rest)[: max(top_k, len(shaped) + 2)]
+    return _softmax_confidence(out)

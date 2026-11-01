@@ -147,3 +147,148 @@ def test_emergency_sign_fast_path(client):
     help_ = next(p for p in phrases if p["is_emergency"])
     r = client.post("/api/patient", data={"session_id": "s2", "sign_phrase_ids": json.dumps([help_["id"]])}).json()
     assert r["ranker"] == "fast-path" and r["candidates"][0]["text"] == help_["text"]
+
+
+# ---------------------------------------------------------------- question-shaped replies
+def test_question_shape_and_shaped_replies(tmp_path):
+    assert fusion.question_shape("Paani thanda ya normal?") == {"type": "choice", "options": ["Thanda", "Normal"]}
+    assert fusion.question_shape("Would you like hot water or cold water?")["options"] == ["Hot water", "Cold water"]
+    assert fusion.question_shape("Kya dawai li?") == {"type": "yes_no", "options": ["Haan", "Nahi"]}
+    assert fusion.question_shape("Are you cold?")["options"] == ["Yes", "No"]
+    assert fusion.question_shape("What would you like to drink?")["type"] == "open"
+    db = Database(str(tmp_path / "q.db"))
+    from backend.seed import seed_phrases
+    seed_phrases(db)
+    r = fusion.suggest_replies("Aap chai lenge ya coffee?", db.phrases())
+    assert [c["text"] for c in r[:2]] == ["Chai", "Coffee"] and all(c["confidence"] > 0 for c in r)
+
+
+# ---------------------------------------------------------------- free-tier budget (fake ElevenLabs)
+import asyncio
+
+import httpx
+
+from backend.elevenlabs import API, ElevenLabs
+
+
+def fake_elevenlabs(el, handlers):
+    """Route each key's requests to handler(key_index, request); records the calls."""
+    calls = []
+    for i, key in enumerate(el.pool.keys):
+        def handle(req, i=i):
+            calls.append((i, req.url.path))
+            if req.url.path == "/v1/user/subscription":
+                return httpx.Response(404)
+            return handlers(i, req)
+        el._clients[key.id] = httpx.AsyncClient(base_url=API, transport=httpx.MockTransport(handle))
+    return calls
+
+
+def test_tts_falls_back_to_next_key_when_quota_is_used_up(tmp_path):
+    el = ElevenLabs(Database(str(tmp_path / "b.db")), api_key="key-one,key-two")
+    calls = fake_elevenlabs(el, lambda i, req: httpx.Response(401, json={"detail": {"status": "quota_exceeded"}})
+                            if i == 0 else httpx.Response(200, content=b"mp3"))
+    res = asyncio.run(el.speak("Hello", "voice"))
+    assert res["audio"] == b"mp3" and not res["cached"]
+    first, second = el.pool.summary()
+    assert first["exhausted"] and not second["exhausted"] and second["used"] > 0
+    asyncio.run(el.speak("Hello again", "voice"))
+    assert (0, "/v1/text-to-speech/voice") not in calls[3:]          # the used-up key is not tried again
+    assert asyncio.run(el.speak("Hello", "voice"))["cached"] is True   # repeats are free
+
+
+def test_all_keys_used_up_falls_back_to_browser_voice(tmp_path):
+    el = ElevenLabs(Database(str(tmp_path / "b.db")), api_key="key-one")
+    fake_elevenlabs(el, lambda i, req: httpx.Response(402, json={"detail": "quota"}))
+    assert asyncio.run(el.speak("Hi", "voice")) == {"mock": True, "budget": "exhausted"}
+    assert el.budget()["fraction_left"] == 0.0
+
+
+def test_near_identical_clip_reuses_transcript(tmp_path):
+    el = ElevenLabs(Database(str(tmp_path / "b.db")), api_key="key-one")
+    calls = fake_elevenlabs(el, lambda i, req: httpx.Response(200, json={"text": "paani chahiye", "words": []}))
+    stt = lambda wav: asyncio.run(el.transcribe(wav, role="patient"))  # noqa: E731
+    assert stt(word(WORDS[1], seed=1))["text"] == "paani chahiye"
+    again = stt(word(WORDS[1], stretch=1.1, noise=0.02, seed=2))        # same phrase, new recording
+    assert again["cached"] == "fuzzy" and again["text"] == "paani chahiye"
+    stt(word(WORDS[3], seed=3))                                          # a different phrase is sent
+    assert [p for _, p in calls].count("/v1/speech-to-text") == 2
+
+
+def test_patient_turn_skips_scribe_when_template_match_is_clear(tmp_path, monkeypatch):
+    monkeypatch.setattr("backend.config.Settings.llm_enabled", property(lambda self: False))
+    app = create_app(db_path=str(tmp_path / "api.db"), elevenlabs_key="key-one")
+    calls = fake_elevenlabs(app.state.el, lambda i, req: httpx.Response(200, json={"text": "x", "words": []}))
+    with TestClient(app) as c:
+        water = next(p for p in c.get("/api/phrases").json() if p["text"] == "I want water")
+        c.post("/api/templates", data={"phrase_id": water["id"]}, files={"audio": ("a.wav", word(WORDS[1]), "audio/wav")})
+        r = c.post("/api/patient", data={"session_id": "s3"},
+                   files={"audio": ("p.wav", word(WORDS[1], stretch=1.3, seed=5), "audio/wav")}).json()
+        assert r["stt"]["skipped"] and r["candidates"][0]["text"] == "I want water"
+        assert not any(p == "/v1/speech-to-text" for _, p in calls)
+        assert c.get("/api/metrics").json()["credits"]["stt_calls_skipped"] == 1
+
+
+# ---------------------------------------------------------------- learning as you talk
+def test_confirmed_spoken_phrase_becomes_a_template(client):
+    water = next(p for p in client.get("/api/phrases").json() if p["text"] == "I want water")
+    pain = next(p for p in client.get("/api/phrases").json() if p["text"] == "I am in pain")
+    for p, f in ((water, WORDS[1]), (pain, WORDS[2])):
+        client.post("/api/templates", data={"phrase_id": p["id"]}, files={"audio": ("a.wav", word(f), "audio/wav")})
+    client.post("/api/patient", data={"session_id": "s4"},
+                files={"audio": ("p.wav", word(WORDS[1], stretch=1.3, seed=8), "audio/wav")})
+    r = client.post("/api/confirm", json={"session_id": "s4", "text": "I want water", "phrase_id": water["id"],
+                                          "sources": ["spectrogram"]}).json()
+    assert r["learned_template"] is True
+    assert next(p for p in client.get("/api/phrases").json() if p["id"] == water["id"])["n_templates"] == 2
+    # a typed message (no recent audio for the session) teaches nothing
+    r = client.post("/api/confirm", json={"session_id": "s4", "text": "I want water", "phrase_id": water["id"],
+                                          "sources": ["spectrogram"]}).json()
+    assert r["learned_template"] is False
+
+
+def test_learned_sign_samples_are_capped_and_recorded_ones_kept(client):
+    client.post("/api/signs", json={"label": "B", "samples": [[0.5] * 254] * 3})
+    client.post("/api/signs", json={"label": "B", "samples": [[0.1] * 254] * 45, "learned": True})
+    assert client.get("/api/signs/summary").json()[0]["n"] == 3 + 40
+
+
+def test_time_of_day_prior_favours_phrases_said_at_this_hour(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    from backend.seed import seed_phrases
+    seed_phrases(db)
+    water = next(p for p in db.phrases() if p["text"] == "I want water")
+    for _ in range(3):
+        db.add_turn("s", "patient", "I want water")
+    db.add_turn("s", "patient", "I am in pain")          # said once: too few to count
+    assert db.phrase_time_prior() == {water["id"]: 1.0}
+
+
+def test_partner_phone_feed_and_emergency(client):
+    r = client.post("/api/partner", data={"session_id": "s5", "text": "Are you cold?"}).json()
+    latest = client.get("/api/partner/latest", params={"session_id": "s5", "after": 0}).json()
+    assert latest["turn_id"] == r["turn_id"] and latest["question"]["type"] == "yes_no"
+    assert client.get("/api/partner/latest", params={"session_id": "s5", "after": r["turn_id"]}).json() == {}
+    e = client.post("/api/emergency", data={"session_id": "s5", "trigger": "open palm"}).json()
+    assert e["text"] == next(p for p in client.get("/api/phrases").json() if p["is_emergency"])["text"]
+
+
+# ---------------------------------------------------------------- real-data WER script
+def test_run_wer_reads_torgo_layout_and_measures_scribe(tmp_path):
+    from eval import run_wer
+    for spk, ref in (("F01", "the boy ran"), ("FC01", "hello")):
+        d = tmp_path / spk / "Session1"
+        (d / "wav_headMic").mkdir(parents=True)
+        (d / "prompts").mkdir()
+        (d / "wav_headMic" / "0001.wav").write_bytes(word(WORDS[1], seed=len(spk)))
+        (d / "prompts" / "0001.txt").write_text(ref)
+        (d / "wav_headMic" / "0002.wav").write_bytes(word(WORDS[1], seed=9))
+        (d / "prompts" / "0002.txt").write_text("input/images/picture.jpg")   # not read speech: skipped
+    items = run_wer.collect(tmp_path, limit=10)
+    assert sorted((i["speaker"], i["group"]) for i in items) == [("F01", "dysarthric"), ("FC01", "control")]
+    el = ElevenLabs(Database(str(tmp_path / "w.db")), api_key="key-one")
+    calls = fake_elevenlabs(el, lambda i, req: httpx.Response(200, json={"text": "the boy", "words": []}))
+    rows = asyncio.run(run_wer.evaluate(items, el))
+    assert [p for _, p in calls].count("/v1/speech-to-text") == 2        # near-identical clips are not re-used
+    assert next(r for r in rows if r["speaker"] == "F01")["wer"] == pytest.approx(1 / 3, abs=1e-4)
+    assert "REAL data" in run_wer.report(rows)

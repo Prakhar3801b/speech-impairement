@@ -1,4 +1,4 @@
-<title>Saathi Voice Assistant</title>
+<title>Clio Voice Assistant</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
@@ -120,7 +120,7 @@ code { font: 13px var(--f-mono); background: var(--sunk); padding: 1px 5px; bord
 <div class="wrap">
   <header>
     <div>
-      <h1>Saathi <span>Voice Assistant</span></h1>
+      <h1>Clio <span>Voice Assistant</span></h1>
       <p class="lede">Helps a person with a speech impairment hold a conversation. It combines unclear speech, a match of their voice's spectrogram, Indian Sign Language fingerspelling and face cues to suggest messages. When the patient confirms one, it's read aloud.</p>
     </div>
     <span class="pill"><i></i>Browser demo · simulated inputs</span>
@@ -330,7 +330,7 @@ const PHRASES = RAW.map((r, i) => ({ id: i + 1, text: r[0], language: r[1], cate
 const byText = Object.fromEntries(PHRASES.map(p => [p.text, p]));
 const store = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) } catch { return d } },
                 set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} } };
-const savedUse = store.get("saathi.use", {});
+const savedUse = store.get("clio.use", {});
 PHRASES.forEach(p => p.use_count = savedUse[p.id] || 0);
 
 /* ===================================================== text utils (port of fusion.py) */
@@ -674,7 +674,7 @@ function confirm(c, via, wasTop) {
   const secs = state.shownAt ? ((performance.now() - state.shownAt) / 1000).toFixed(1) + " s" : "";
   chatAdd("patient", c.text, [via, secs].filter(Boolean).join(" · "));
   stats.turns++; if (wasTop) stats.top1++; stats.acts += Math.max(1, state.acts);
-  if (c.phrase_id) { PHRASES[c.phrase_id - 1].use_count++; savedUse[c.phrase_id] = PHRASES[c.phrase_id - 1].use_count; store.set("saathi.use", savedUse) }
+  if (c.phrase_id) { PHRASES[c.phrase_id - 1].use_count++; savedUse[c.phrase_id] = PHRASES[c.phrase_id - 1].use_count; store.set("clio.use", savedUse) }
   resetSignals(); updateStats();
 }
 function updateStats() {

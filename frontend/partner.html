@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clio Partner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Noto+Sans+Devanagari:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { min-height: 100vh; display: flex; flex-direction: column; }
+    .partner-main { flex: 1; display: flex; flex-direction: column; gap: 1rem; padding: 1rem max(16px, env(safe-area-inset-right, 0px)) 2rem max(16px, env(safe-area-inset-left, 0px)); max-width: 640px; width: 100%; margin: 0 auto; }
+    .said { background: var(--patient-container); color: var(--on-accent-container); border-radius: 24px; padding: 1.5rem; min-height: 140px;
+      display: flex; flex-direction: column; justify-content: center; gap: .4rem; }
+    .said small { color: var(--muted); font-size: .8rem; font-weight: 500; }
+    .said p { margin: 0; font-size: clamp(1.8rem, 8vw, 2.6rem); font-weight: 500; line-height: 1.2; }
+    .hold { width: 100%; min-height: 120px; border-radius: 28px; font-size: 1.15rem; flex-direction: column; gap: .4rem;
+      background: var(--partner-container); color: var(--partner); touch-action: none; user-select: none; }
+    .hold .icon { font-size: 40px; }
+    .hold[aria-pressed="true"] { background: var(--partner); color: #fff; }
+  </style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo icon" aria-hidden="true">graphic_eq</span>
+    <div><h1>Clio</h1><p class="sub">Partner's phone</p></div>
+  </div>
+</header>
+
+<main class="partner-main">
+  <section class="said" aria-live="polite">
+    <small>The patient says</small>
+    <p id="lastSaid">Waiting for the first message…</p>
+  </section>
+
+  <button class="btn hold" id="hold" aria-pressed="false">
+    <span class="icon" aria-hidden="true">mic</span><span id="holdLabel">Hold to talk</span>
+  </button>
+  <p class="hint" id="micNote" hidden></p>
+
+  <form class="row" id="typeForm">
+    <input id="typed" placeholder="Or type what you want to say" autocomplete="off" aria-label="Your words">
+    <button class="btn tonal">Send</button>
+  </form>
+
+  <div class="card">
+    <h3>Conversation</h3>
+    <ol class="chat" id="chat"></ol>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+<script type="module" src="js/partner.js"></script>
+</body>
+</html>

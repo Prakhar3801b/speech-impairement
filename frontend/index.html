@@ -3,32 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Saathi Voice Assistant</title>
+  <title>Clio Voice Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Noto+Sans+Devanagari:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="logo" aria-hidden="true">◉</span>
+    <span class="logo icon" aria-hidden="true">graphic_eq</span>
     <div>
-      <h1>Saathi</h1>
-      <p class="sub">Multimodal conversation assistant · PS16</p>
+      <h1>Clio</h1>
+      <p class="sub" id="greeting">Conversation assistant</p>
     </div>
   </div>
-  <div class="status" id="status" aria-live="polite"></div>
+  <div class="topbar-actions">
+    <div class="status" id="status" aria-live="polite"></div>
+    <button class="btn text" id="openSetup"><span class="icon" aria-hidden="true">tune</span>Setup</button>
+    <button class="btn help" id="helpBtn"><span class="icon" aria-hidden="true">emergency</span>Help</button>
+  </div>
 </header>
 
 <nav class="tabs" role="tablist">
-  <button role="tab" data-tab="converse" class="active">Converse</button>
-  <button role="tab" data-tab="signs">ISL signs</button>
-  <button role="tab" data-tab="spectro">Spectrogram phrases</button>
-  <button role="tab" data-tab="voice">Voice &amp; consent</button>
+  <button role="tab" data-tab="converse" class="active">Talk</button>
+  <button role="tab" data-tab="signs">Teach signs</button>
+  <button role="tab" data-tab="spectro">Teach phrases</button>
+  <button role="tab" data-tab="voice">Voice</button>
   <button role="tab" data-tab="phrases">Phrasebook</button>
-  <button role="tab" data-tab="metrics">Metrics</button>
+  <button role="tab" data-tab="metrics">Insights</button>
 </nav>
 
 <main>
-  <!-- ============================== CONVERSE -->
+  <!-- ============================== TALK -->
   <section id="tab-converse" class="tab active">
     <div class="grid-converse">
       <div class="col">
@@ -37,7 +45,8 @@
             <video id="video" playsinline muted></video>
             <canvas id="overlay"></canvas>
             <div class="camera-off" id="cameraOff">
-              <button id="startCamera" class="btn primary">Start camera &amp; mic</button>
+              <span class="icon xl" aria-hidden="true">videocam</span>
+              <button id="startCamera" class="btn filled">Start camera &amp; mic</button>
               <p class="hint">Hand, face and lip tracking run in your browser. Video never leaves this device.</p>
             </div>
           </div>
@@ -52,53 +61,58 @@
 
         <div class="card">
           <div class="card-head">
-            <h3>ISL fingerspelling</h3>
-            <label class="switch"><input type="checkbox" id="signEnabled" checked> recognise signs</label>
+            <h3>Fingerspelling</h3>
+            <label class="switch"><input type="checkbox" id="signEnabled" checked> Recognise signs</label>
           </div>
           <div class="spell" id="spellBuffer" aria-live="polite"></div>
           <div class="row wrap">
-            <button class="btn" id="spellSpace">Space</button>
-            <button class="btn" id="spellBack">⌫</button>
-            <button class="btn" id="spellClear">Clear</button>
-            <button class="btn primary" id="spellSend">Use signs →</button>
+            <button class="btn tonal" id="spellSpace">Space</button>
+            <button class="btn tonal" id="spellBack" aria-label="Delete last letter"><span class="icon" aria-hidden="true">backspace</span></button>
+            <button class="btn text" id="spellClear">Clear</button>
+            <button class="btn filled" id="spellSend">Use letters</button>
           </div>
           <div class="chips" id="signPhrases"></div>
         </div>
 
-        <div class="card">
-          <div class="card-head"><h3>Live spectrogram</h3><span class="hint">short-time FFT of the microphone</span></div>
+        <details class="card fold">
+          <summary><h3>Live spectrogram</h3><span class="hint">short-time FFT of the microphone</span></summary>
           <canvas id="liveSpec" class="spec" height="110"></canvas>
           <div class="spec-compare" id="specCompare" hidden>
             <div><span class="hint">this utterance</span><canvas id="specInput" class="spec small" height="70"></canvas></div>
             <div><span class="hint" id="specMatchLabel">best template</span><canvas id="specMatch" class="spec small" height="70"></canvas></div>
           </div>
-        </div>
+        </details>
       </div>
 
       <div class="col">
         <div class="card controls">
-          <div class="row wrap">
-            <label>Language
-              <select id="language">
-                <option value="auto">Auto (En / Hi / Hinglish)</option>
-                <option value="eng">English</option>
-                <option value="hin">Hindi</option>
-              </select>
-            </label>
-            <label class="switch"><input type="checkbox" id="useLLM" checked> LLM ranker</label>
-            <label class="switch"><input type="checkbox" id="useScribe" checked> Scribe STT</label>
-            <label class="switch"><input type="checkbox" id="useSpectro" checked> Spectrogram match</label>
-          </div>
           <div class="talk-buttons">
             <button class="btn talk partner" id="partnerBtn" aria-pressed="false">
-              <span class="big">🗣</span> Partner speaks <kbd>O</kbd></button>
+              <span class="icon big" aria-hidden="true">record_voice_over</span>Partner speaks <kbd>O</kbd></button>
             <button class="btn talk patient" id="patientBtn" aria-pressed="false">
-              <span class="big">🎙</span> Patient speaks <kbd>P</kbd></button>
+              <span class="icon big" aria-hidden="true">mic</span>Patient speaks <kbd>P</kbd></button>
           </div>
           <form class="row" id="partnerTextForm">
-            <input id="partnerText" placeholder="…or type what the partner said" autocomplete="off">
-            <button class="btn">Send</button>
+            <input id="partnerText" placeholder="Or type what the partner said" autocomplete="off" aria-label="Partner's words">
+            <button class="btn tonal">Send</button>
           </form>
+          <details class="advanced">
+            <summary>Options</summary>
+            <div class="row wrap">
+              <label>Language
+                <select id="language">
+                  <option value="auto">Auto (En / Hi / Hinglish)</option>
+                  <option value="eng">English</option>
+                  <option value="hin">Hindi</option>
+                </select>
+              </label>
+              <label class="switch"><input type="checkbox" id="useLLM" checked> LLM ranker</label>
+              <label class="switch"><input type="checkbox" id="useScribe" checked> Scribe STT</label>
+              <label class="switch"><input type="checkbox" id="useSpectro" checked> Spectrogram match</label>
+              <label class="switch"><input type="checkbox" id="emergencyGestures" checked> Emergency gestures</label>
+            </div>
+            <p class="hint">Emergency gestures: hold an open palm to the camera for 2.5 s, or raise your eyebrows twice quickly.</p>
+          </details>
         </div>
 
         <div class="card">
@@ -107,18 +121,22 @@
             <span class="hint" id="rankerInfo"></span>
           </div>
           <div id="candidates" class="candidates" aria-live="polite">
-            <p class="empty">Speak, sign or gesture. Suggestions appear here.<br>
-              Choose with <kbd>1</kbd>–<kbd>3</kbd>, a click, or 👍 (hold); 👎 moves to the next one.</p>
+            <p class="empty" id="emptyHint">Speak, sign or gesture. Suggestions appear here.</p>
           </div>
           <form class="row" id="customForm">
-            <input id="customText" placeholder="None of these? Type the message" autocomplete="off">
-            <button class="btn">Speak</button>
+            <input id="customText" placeholder="None of these? Type the message" autocomplete="off" aria-label="Custom message">
+            <button class="btn tonal">Speak</button>
           </form>
           <div class="latency" id="latency"></div>
         </div>
 
         <div class="card">
-          <div class="card-head"><h3>Conversation</h3><button class="btn ghost" id="newSession">New session</button></div>
+          <div class="card-head"><h3>Conversation</h3>
+            <div class="row" style="margin:0">
+              <button class="btn text" id="partnerPhone"><span class="icon" aria-hidden="true">smartphone</span>Partner phone</button>
+              <button class="btn text" id="newSession">New session</button>
+            </div>
+          </div>
           <ol class="chat" id="chat"></ol>
         </div>
       </div>
@@ -129,11 +147,9 @@
   <section id="tab-signs" class="tab">
     <div class="grid-2">
       <div class="card">
-        <h3>Train Indian Sign Language signs</h3>
-        <p class="hint">Static ISL letters (A–Z) and digits, single phrase signs, and control signs
-          (SPACE, DEL, SEND). Hold the sign steady in front of the camera; we capture about 40 frames of hand-landmark
-          features. Record each sign 2–3 times, ideally with slightly different angles. Many ISL letters use both hands,
-          and both are captured.</p>
+        <h3>Teach Indian Sign Language signs</h3>
+        <p class="hint">Hold a sign steady in front of the camera for about 3 seconds. Record each sign 2–3 times from
+          slightly different angles. Both hands are captured.</p>
         <div class="row wrap">
           <label>Type
             <select id="signKind">
@@ -145,15 +161,15 @@
           <label id="signLabelWrap">Sign <select id="signLabel"></select></label>
         </div>
         <div class="row">
-          <button class="btn primary" id="recordSign">Record sign (3 s countdown)</button>
+          <button class="btn filled" id="recordSign"><span class="icon" aria-hidden="true">back_hand</span>Record sign</button>
           <span id="signRecStatus" class="hint"></span>
         </div>
         <div class="live-pred">Live prediction: <strong id="livePred">–</strong></div>
-        <p class="hint">The camera is shared with the Converse tab. Start it there first.</p>
+        <p class="hint">Uses the camera from the Talk tab. Start it there first.</p>
       </div>
       <div class="card">
         <div class="card-head"><h3>Trained signs</h3><span class="hint" id="signCount"></span></div>
-        <table class="table" id="signTable"><thead><tr><th>Sign</th><th>Type</th><th>Samples</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="table-wrap"><table class="table" id="signTable"><thead><tr><th>Sign</th><th>Type</th><th>Samples</th><th></th></tr></thead><tbody></tbody></table></div>
       </div>
     </div>
   </section>
@@ -162,21 +178,20 @@
   <section id="tab-spectro" class="tab">
     <div class="grid-2">
       <div class="card">
-        <h3>Enroll the patient's own pronunciations</h3>
-        <p class="hint">Each recording becomes a spectrogram template (log-mel to MFCC). Live speech is matched with
-          dynamic time warping, which works even when speech is slurred, provided it is <em>consistent</em>. Record each
-          phrase 3 times. This runs locally and costs no ElevenLabs credits.</p>
+        <h3>Teach Clio how you say a phrase</h3>
+        <p class="hint">Say each phrase 3 times in your own way. Clio compares later speech with these recordings, so
+          it works even when speech is slurred, as long as it is said the same way. Runs on this computer and uses no credits.</p>
         <label>Phrase <select id="tmplPhrase"></select></label>
         <div class="row">
-          <button class="btn primary" id="tmplRecord" aria-pressed="false">● Record</button>
-          <button class="btn" id="tmplTest" aria-pressed="false">Test match</button>
+          <button class="btn filled" id="tmplRecord" aria-pressed="false"><span class="icon" aria-hidden="true">fiber_manual_record</span>Record</button>
+          <button class="btn tonal" id="tmplTest" aria-pressed="false">Test match</button>
         </div>
         <canvas id="tmplSpec" class="spec" height="90"></canvas>
         <div id="tmplResult" class="hint"></div>
       </div>
       <div class="card">
-        <h3>Templates</h3>
-        <table class="table" id="tmplTable"><thead><tr><th>Phrase</th><th>Lang</th><th>Recordings</th></tr></thead><tbody></tbody></table>
+        <h3>Recorded phrases</h3>
+        <div class="table-wrap"><table class="table" id="tmplTable"><thead><tr><th>Phrase</th><th>Lang</th><th>Recordings</th></tr></thead><tbody></tbody></table></div>
       </div>
     </div>
   </section>
@@ -186,45 +201,61 @@
     <div class="grid-2">
       <div class="card">
         <h3>Voice</h3>
-        <p>Current voice: <code id="currentVoice">–</code></p>
+        <p class="hint">Current voice: <code id="currentVoice">–</code></p>
         <div id="voiceList"></div>
-        <h4>Design a voice (no recordings needed, works on the free tier)</h4>
+        <h4>Describe a new voice</h4>
+        <p class="hint">No recordings needed. Works on the ElevenLabs free tier.</p>
         <form id="designForm" class="stack">
-          <textarea id="designDesc" rows="3" placeholder="e.g. Warm, calm Indian English male voice, late 50s, slightly slow pace, gentle tone"></textarea>
-          <button class="btn primary">Generate previews</button>
+          <textarea id="designDesc" rows="3" placeholder="e.g. Warm, calm Indian English male voice, late 50s, slightly slow pace, gentle tone" aria-label="Voice description"></textarea>
+          <button class="btn filled">Create 3 previews</button>
         </form>
         <div id="designPreviews" class="stack"></div>
       </div>
-      <div class="card">
-        <h3>Consent for voice cloning</h3>
-        <p class="hint">Cloning needs an active consent record from the voice owner or their guardian. Revoking consent
-          deletes the cloned voice and its cached audio. Instant voice cloning needs a paid ElevenLabs plan.</p>
+      <div class="card" id="consentCard">
+        <h3>Use a real person's voice</h3>
+        <p class="hint">Copying someone's voice needs their consent, or a guardian's. You can withdraw it at any time,
+          which deletes the copied voice.</p>
         <form id="consentForm" class="stack">
-          <input id="cOwner" placeholder="Voice owner (whose voice)" required>
-          <input id="cSigner" placeholder="Signer's full name" required>
-          <select id="cRel">
-            <option value="self">Signer is the voice owner</option>
-            <option value="guardian">Guardian</option>
-            <option value="legal representative">Legal representative</option>
-            <option value="caregiver">Caregiver</option>
-          </select>
-          <input id="cPurpose" value="assistive communication in this app" required>
+          <label class="field">Whose voice is it?
+            <input id="cOwner" placeholder="Full name" required autocomplete="name">
+          </label>
+          <fieldset class="segmented" id="cWho">
+            <legend>Who is agreeing?</legend>
+            <label><input type="radio" name="cWho" value="self" checked><span>It's my own voice</span></label>
+            <label><input type="radio" name="cWho" value="other"><span>I'm family or a guardian</span></label>
+          </fieldset>
+          <div class="stack" id="cOtherFields" hidden>
+            <label class="field">Your full name
+              <input id="cSigner" placeholder="Your name">
+            </label>
+            <label class="field">You are their
+              <select id="cRel">
+                <option value="guardian">Guardian</option>
+                <option value="caregiver">Caregiver</option>
+                <option value="legal representative">Legal representative</option>
+              </select>
+            </label>
+          </div>
+          <input type="hidden" id="cPurpose" value="assistive communication in this app">
           <blockquote id="cStatement" class="statement"></blockquote>
-          <input id="cSignature" placeholder="Type your full name to sign" required>
-          <label class="switch"><input type="checkbox" id="cAgree"> I have read and agree to the statement above</label>
-          <button class="btn primary">Record consent</button>
+          <button class="btn filled"><span class="icon" aria-hidden="true">check</span>I agree</button>
         </form>
-        <h4>Consent records</h4>
+        <h4>Consents</h4>
         <div id="consentList"></div>
-        <h4>Clone a consented voice</h4>
-        <form id="cloneForm" class="stack">
-          <select id="cloneConsent"></select>
-          <input id="cloneName" placeholder="Voice name" required>
-          <input id="cloneFiles" type="file" accept="audio/*" multiple required>
-          <button class="btn">Clone voice</button>
-        </form>
-        <h4>Audit log</h4>
-        <ol class="audit" id="auditLog"></ol>
+        <details class="advanced">
+          <summary>Copy a voice from recordings</summary>
+          <p class="hint">Needs a paid ElevenLabs plan and an active consent above.</p>
+          <form id="cloneForm" class="stack">
+            <select id="cloneConsent" aria-label="Consent"></select>
+            <input id="cloneName" placeholder="Voice name" required aria-label="Voice name">
+            <input id="cloneFiles" type="file" accept="audio/*" multiple required aria-label="Recordings">
+            <button class="btn tonal">Copy voice</button>
+          </form>
+        </details>
+        <details class="advanced">
+          <summary>Audit log</summary>
+          <ol class="audit" id="auditLog"></ol>
+        </details>
       </div>
     </div>
   </section>
@@ -234,19 +265,19 @@
     <div class="card">
       <div class="card-head">
         <h3>Phrasebook</h3>
-        <button class="btn" id="precache">Pre-generate audio for all phrases</button>
+        <button class="btn tonal" id="precache"><span class="icon" aria-hidden="true">download</span>Prepare audio for all phrases</button>
       </div>
       <p class="hint" id="precacheInfo">Audio is generated once per phrase and voice, then stored in the database. Replays cost no credits.</p>
       <form id="phraseForm" class="row wrap">
-        <input id="pText" placeholder="Phrase text" required>
-        <select id="pLang"><option value="en">English</option><option value="hi">Hindi</option><option value="mixed">Hinglish</option></select>
-        <input id="pCat" placeholder="category" value="general">
-        <input id="pAliases" placeholder="aliases, comma separated">
-        <input id="pKeywords" placeholder="context keywords, comma separated">
+        <input id="pText" placeholder="Phrase text" required aria-label="Phrase text">
+        <select id="pLang" aria-label="Language"><option value="en">English</option><option value="hi">Hindi</option><option value="mixed">Hinglish</option></select>
+        <input id="pCat" placeholder="category" value="general" aria-label="Category">
+        <input id="pAliases" placeholder="aliases, comma separated" aria-label="Aliases">
+        <input id="pKeywords" placeholder="context keywords, comma separated" aria-label="Context keywords">
         <label class="switch"><input type="checkbox" id="pEmergency"> emergency</label>
-        <button class="btn primary">Add</button>
+        <button class="btn filled">Add</button>
       </form>
-      <table class="table" id="phraseTable"><thead><tr><th>Phrase</th><th>Lang</th><th>Category</th><th>Used</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="table-wrap"><table class="table" id="phraseTable"><thead><tr><th>Phrase</th><th>Lang</th><th>Category</th><th>Used</th><th></th></tr></thead><tbody></tbody></table></div>
     </div>
   </section>
 
@@ -261,6 +292,77 @@
     </div>
   </section>
 </main>
+
+<!-- ============================== FIRST-RUN SETUP (3 steps) -->
+<dialog id="setup" aria-labelledby="setupTitle">
+  <form method="dialog" id="setupForm">
+    <div class="steps" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+
+    <div class="step" data-step="0">
+      <h2 id="setupTitle">Welcome to Clio</h2>
+      <p class="hint">Three quick choices and you're ready to talk. You can change them later under Setup.</p>
+      <label class="field">What should we call you?
+        <input id="sName" placeholder="Your name (optional)" autocomplete="given-name">
+      </label>
+      <p class="label">Language</p>
+      <div class="tiles" role="radiogroup" aria-label="Language">
+        <label class="tile"><input type="radio" name="sLang" value="eng"><span class="icon" aria-hidden="true">translate</span><b>English</b></label>
+        <label class="tile"><input type="radio" name="sLang" value="hin"><span class="icon" aria-hidden="true">translate</span><b lang="hi">हिन्दी</b></label>
+        <label class="tile"><input type="radio" name="sLang" value="auto" checked><span class="icon" aria-hidden="true">forum</span><b>Hinglish / mixed</b></label>
+      </div>
+    </div>
+
+    <div class="step" data-step="1" hidden>
+      <h2>How will you say “yes”?</h2>
+      <p class="hint">Pick the movement that is easiest for you. It picks the highlighted suggestion.</p>
+      <div class="tiles" role="radiogroup" aria-label="Yes signal">
+        <label class="tile"><input type="radio" name="sYes" value="nod"><span class="icon" aria-hidden="true">face</span><b>Nod</b><small>Shake your head for the next one</small></label>
+        <label class="tile"><input type="radio" name="sYes" value="thumbs" checked><span class="icon" aria-hidden="true">thumb_up</span><b>Thumbs up</b><small>Thumbs down for the next one</small></label>
+        <label class="tile"><input type="radio" name="sYes" value="tap"><span class="icon" aria-hidden="true">touch_app</span><b>Tap or key</b><small>Click, Enter or a switch</small></label>
+        <label class="tile"><input type="radio" name="sYes" value="scan"><span class="icon" aria-hidden="true">switch_access</span><b>Auto-scan</b><small>The highlight moves by itself; press Space or a switch to pick</small></label>
+      </div>
+    </div>
+
+    <div class="step" data-step="2" hidden>
+      <h2>Choose a voice</h2>
+      <p class="hint">This is the voice Clio speaks with.</p>
+      <div class="tiles" role="radiogroup" aria-label="Voice">
+        <label class="tile"><input type="radio" name="sVoice" value="default" checked><span class="icon" aria-hidden="true">volume_up</span><b>Ready-made voice</b><small>Start right away</small></label>
+        <label class="tile"><input type="radio" name="sVoice" value="design"><span class="icon" aria-hidden="true">auto_awesome</span><b>Describe a voice</b><small>Age, accent, warmth</small></label>
+        <label class="tile"><input type="radio" name="sVoice" value="own"><span class="icon" aria-hidden="true">verified_user</span><b>My own voice</b><small>From recordings, with consent</small></label>
+      </div>
+    </div>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn text" id="setupBack" hidden>Back</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn text" id="setupSkip">Skip</button>
+      <button type="button" class="btn filled" id="setupNext">Next</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ============================== PARTNER PHONE -->
+<dialog id="partnerDialog" aria-labelledby="partnerTitle">
+  <div class="stack" style="padding:1.5rem">
+    <h2 id="partnerTitle">Partner's phone</h2>
+    <p class="hint">The partner scans this code. Their phone becomes a second microphone, and shows large captions of what
+      the patient says. Both devices must be on the same Wi-Fi.</p>
+    <div id="partnerQr" class="qr"></div>
+    <code id="partnerUrl" class="url"></code>
+    <p class="hint" id="partnerNote"></p>
+    <div class="dialog-actions"><span class="spacer"></span>
+      <button class="btn text" id="copyPartnerUrl">Copy link</button>
+      <button class="btn filled" id="closePartner">Done</button></div>
+  </div>
+</dialog>
+
+<!-- ============================== EMERGENCY -->
+<div class="emergency-screen" id="emergency" role="alertdialog" aria-labelledby="emergencyText" hidden>
+  <span class="icon" aria-hidden="true">emergency</span>
+  <p id="emergencyText">I need help now</p>
+  <button class="btn" id="emergencyDismiss">I'm OK now</button>
+</div>
 
 <div class="toast" id="toast" role="status"></div>
 <script type="module" src="js/app.js"></script>

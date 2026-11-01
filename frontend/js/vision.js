@@ -57,6 +57,7 @@ export class Vision {
     this.state.hands = hr.landmarks.map((lm, i) => ({ lm, side: handed[i]?.[0]?.categoryName || 'Right' }));
     this.state.features = handFeatures(this.state.hands);
     this.state.thumbs = this.state.hands.length === 1 ? thumbsDirection(this.state.hands[0].lm) : null;
+    this.state.openPalm = this.state.hands.length === 1 && isOpenPalm(this.state.hands[0].lm);
     for (const h of this.state.hands) this.drawPoints(h.lm, '#34c38f', 3);
 
     if (this.frameNo++ % 2 === 0) {            // face at half rate is plenty
@@ -65,6 +66,7 @@ export class Vision {
         const bs = Object.fromEntries(fr.faceBlendshapes[0].categories.map((c) => [c.categoryName, c.score]));
         this.updateExpression(bs);
         this.updateJaw(bs.jawOpen || 0);
+        this.updateBrows(bs.browInnerUp || 0, now);
       }
       if (fr.facialTransformationMatrixes?.length) this.updateHead(fr.facialTransformationMatrixes[0].data, now);
       if (fr.faceLandmarks?.length) {
@@ -105,6 +107,15 @@ export class Vision {
     if (!this.utter) return;
     if (!this.jawHigh && jaw > 0.18) { this.jawHigh = true; this.utter.syllables++; }
     else if (this.jawHigh && jaw < 0.08) this.jawHigh = false;
+  }
+
+  /** Two quick eyebrow raises (within 1.5 s) set state.browDouble to the time they happened. */
+  updateBrows(v, now) {
+    if (!this.browHigh && v > 0.55) {
+      this.browHigh = true;
+      this.browRaises = (this.browRaises || []).filter((t) => now - t < 1500).concat(now);
+      if (this.browRaises.length >= 2) { this.state.browDouble = now; this.browRaises = []; }
+    } else if (this.browHigh && v < 0.3) this.browHigh = false;
   }
 
   updateHead(m, now) {
@@ -193,6 +204,15 @@ export function handFeatures(hands) {
   const global = (lm) => (lm ? lm.flatMap((p) => [(p.x - c.x) / gScale, (p.y - c.y) / gScale, (p.z - c.z) / gScale]) : new Array(63).fill(0));
   const pres = [slots.Left ? 2 : 0, slots.Right ? 2 : 0];
   return [...pres, ...local(slots.Left), ...local(slots.Right), ...global(slots.Left), ...global(slots.Right)].map((v) => Math.round(v * 1e4) / 1e4);
+}
+
+/** All five fingers stretched out and pointing up, as in a raised "stop / help" hand. */
+export function isOpenPalm(lm) {
+  const wrist = lm[0], size = dist(wrist, lm[9]) || 1e-3;
+  const extended = [[8, 6], [12, 10], [16, 14], [20, 18]].every(([tip, pip]) => dist(lm[tip], wrist) > dist(lm[pip], wrist) * 1.2);
+  const upright = [8, 12, 16, 20].every((i) => lm[i].y < wrist.y - size * 0.8);
+  const thumbOut = dist(lm[4], lm[5]) > size * 0.45;
+  return extended && upright && thumbOut;
 }
 
 /** 'up' | 'down' | null for a single hand making a thumbs gesture. */

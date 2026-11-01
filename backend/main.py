@@ -39,6 +39,7 @@ class SignIn(BaseModel):
     kind: str = "letter"          # letter | phrase | control
     phrase_id: int | None = None
     samples: list[list[float]]
+    learned: bool = False         # captured during a confirmed turn rather than a training recording
 
 
 class ConfirmIn(BaseModel):
@@ -71,7 +72,12 @@ class DesignSave(BaseModel):
     generated_voice_id: str
     name: str
     description: str
+    key_id: str | None = None          # account the preview was generated in
 
+
+
+MAX_LEARNED_TEMPLATES = 4      # per phrase, on top of the ones the patient recorded
+MAX_LEARNED_SIGN_SAMPLES = 40  # per sign
 
 
 # ---------------------------------------------------------------- state
@@ -94,13 +100,15 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
     seed_phrases(db)
     el = ElevenLabs(db, api_key=elevenlabs_key)
     templates = TemplateIndex(db)
+    recent_audio: dict[str, tuple[float, dsp.Features]] = {}   # session -> last patient utterance
+    partner_latest: dict[str, dict] = {}                      # session -> last partner turn + suggestions
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         yield
         await el.aclose()
 
-    app = FastAPI(title="PS16 Voice Restoration Assistant", lifespan=lifespan)
+    app = FastAPI(title="Clio: PS16 conversation assistant", lifespan=lifespan)
     app.state.db, app.state.el, app.state.templates = db, el, templates
 
     @app.exception_handler(ElevenLabsError)
@@ -123,20 +131,23 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             "stt_model": settings.stt_model, "tts_model": settings.tts_model,
             "llm_model": settings.llm_model if settings.llm_enabled else None,
             "voice_id": current_voice(), "concurrency": settings.elevenlabs_concurrency,
-            "cache": db.cache_stats(), "credits": credit_usage(),
+            "cache": db.cache_stats(), "credits": credit_usage(), "budget": el.budget(),
             "templates": len(templates.items),
         }
 
     def credit_usage() -> dict:
         since = time.time() - 30 * 86400
         rows = db.query("SELECT data FROM events WHERE kind='credit' AND created_at>?", (since,))
-        tts_chars = stt_secs = designs = 0.0
+        tts_chars = stt_secs = saved_secs = designs = skipped = 0.0
         for r in rows:
             d = json.loads(r["data"])
             tts_chars += d.get("chars", 0)
             stt_secs += d.get("seconds", 0)
+            saved_secs += d.get("saved_seconds", 0) + d.get("trimmed_seconds", 0)
             designs += 1 if d.get("service") == "voice_design" else 0
+            skipped += 1 if d.get("source") == "skipped" else 0
         return {"window_days": 30, "tts_chars": int(tts_chars), "stt_minutes": round(stt_secs / 60, 2),
+                "stt_minutes_saved": round(saved_secs / 60, 2), "stt_calls_skipped": int(skipped),
                 "voice_designs": int(designs)}
 
     # ------------------------------------------------------------ phrases
@@ -171,6 +182,21 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             done += 1
         return {"generated": done, "already_cached": cached}
 
+    def phrases_now() -> list[dict]:
+        """The phrasebook, annotated with how often each phrase is said at this time of day."""
+        prior = db.phrase_time_prior()
+        phrases = db.phrases()
+        for p in phrases:
+            p["time_prior"] = prior.get(p["id"], 0.0)
+        return phrases
+
+    def save_template(phrase_id: int, feats: dsp.Features, source: str = "enrolled") -> None:
+        db.execute(
+            "INSERT INTO audio_templates(phrase_id, mfcc, logmel, n_frames, n_mfcc, n_mels, source, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (phrase_id, feats.mfcc.tobytes(), feats.logmel.tobytes(), len(feats.mfcc),
+             feats.mfcc.shape[1], feats.logmel.shape[1], source, time.time()))
+
     # ------------------------------------------------------------ spectrogram templates
     @app.post("/api/templates")
     async def enroll_template(phrase_id: int = Form(...), audio: UploadFile = File(...)):
@@ -183,11 +209,7 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             raise HTTPException(400, f"could not read WAV audio: {e}") from e
         if len(feats.mfcc) < 10:
             raise HTTPException(400, "recording too short or silent")
-        db.execute(
-            "INSERT INTO audio_templates(phrase_id, mfcc, logmel, n_frames, n_mfcc, n_mels, created_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (phrase_id, feats.mfcc.tobytes(), feats.logmel.tobytes(), len(feats.mfcc),
-             feats.mfcc.shape[1], feats.logmel.shape[1], time.time()))
+        save_template(phrase_id, feats)
         templates.reload()
         return {"ok": True, "frames": len(feats.mfcc), "spectrogram": dsp.spectrogram_preview(feats.logmel)}
 
@@ -225,9 +247,14 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             raise HTTPException(400, "kind must be letter, phrase or control")
         label = s.label.strip().upper() if s.kind != "phrase" else s.label.strip()
         now = time.time()
+        source = "learned" if s.learned else "recorded"
         for f in s.samples:
-            db.execute("INSERT INTO sign_samples(label, kind, phrase_id, features, created_at) "
-                       "VALUES(?,?,?,?,?)", (label, s.kind, s.phrase_id, json.dumps(f), now))
+            db.execute("INSERT INTO sign_samples(label, kind, phrase_id, features, source, created_at) "
+                       "VALUES(?,?,?,?,?,?)", (label, s.kind, s.phrase_id, json.dumps(f), source, now))
+        if s.learned:   # keep only the newest learned samples per sign; recorded ones are never dropped
+            db.execute("DELETE FROM sign_samples WHERE label=? AND source='learned' AND id NOT IN "
+                       "(SELECT id FROM sign_samples WHERE label=? AND source='learned' ORDER BY id DESC LIMIT ?)",
+                       (label, label, MAX_LEARNED_SIGN_SAMPLES))
         return {"ok": True, "label": label, "added": len(s.samples)}
 
     @app.delete("/api/signs/{label}")
@@ -248,14 +275,14 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
         stt = {"text": text.strip(), "mock": False, "cached": False}
         if audio is not None and not stt["text"]:
             wav = await audio.read()
-            stt = await el.transcribe(wav, language, session_id)
+            stt = await el.transcribe(wav, language, session_id, role="partner")
             stages["stt_ms"] = (time.perf_counter() - t0) * 1000
         partner_text = stt["text"]
         if not partner_text:
             return {"transcript": "", "suggestions": [], "stt": stt,
                     "note": "No transcript (mock mode or silence). Type the partner's words instead."}
-        db.add_turn(session_id, "partner", partner_text, source="typed" if text else "scribe")
-        phrases = db.phrases()
+        turn_id = db.add_turn(session_id, "partner", partner_text, source="typed" if text else "scribe")
+        phrases = phrases_now()
         t1 = time.perf_counter()
         suggestions = fusion.suggest_replies(partner_text, phrases)
         stages["fusion_ms"] = (time.perf_counter() - t1) * 1000
@@ -265,11 +292,34 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
                                       "shortlist": [{"text": c["text"], "score": c["score"]} for c in suggestions],
                                       "phrasebook": [p["text"] for p in phrases]}, task="reply")
             stages["llm_ms"] = (time.perf_counter() - t2) * 1000
-            if llm_out:
-                suggestions = _attach_phrase_ids(llm_out, phrases)
+            if llm_out:   # the question's own answers stay first; the LLM orders the rest
+                shaped = [c for c in suggestions if any(s.startswith("question:") for s in c["sources"])]
+                suggestions = fusion._dedupe(shaped + _attach_phrase_ids(llm_out, phrases))
         stages["total_ms"] = (time.perf_counter() - t0) * 1000
         log_latency(session_id, "partner", stages)
-        return {"transcript": partner_text, "suggestions": suggestions, "stt": stt, "latency": stages}
+        out = {"transcript": partner_text, "suggestions": suggestions, "stt": stt, "latency": stages,
+               "question": fusion.question_shape(partner_text), "turn_id": turn_id}
+        partner_latest[session_id] = out
+        return out
+
+    @app.get("/api/partner/latest")
+    def partner_latest_turn(session_id: str, after: int = 0):
+        """Latest partner turn for a session (lets the laptop pick up turns spoken on the partner's phone)."""
+        last = partner_latest.get(session_id)
+        return last if last and last["turn_id"] > after else {}
+
+    @app.get("/api/lan")
+    def lan_addresses():
+        """This machine's LAN addresses, so the partner's phone can open the partner page."""
+        import socket
+        addrs = set()
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(("10.255.255.255", 1))   # no packet is sent; picks the outbound interface
+                addrs.add(sock.getsockname()[0])
+        except OSError:
+            pass
+        return {"addresses": sorted(a for a in addrs if not a.startswith("127."))}
 
     def _attach_phrase_ids(cands: list[dict], phrases: list[dict]) -> list[dict]:
         idx = {fusion.normalize(p["text"]): p for p in phrases}
@@ -294,26 +344,32 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
         except (ValueError, TypeError) as e:
             raise HTTPException(400, f"bad cues/sign_phrase_ids JSON: {e}") from e
 
-        async def run_stt():
-            if not (wav and use_scribe):
-                return {"text": "", "words": [], "mock": not el.enabled, "cached": False}
-            t = time.perf_counter()
-            res = await el.transcribe(wav, language, session_id)
-            if not res.get("mock"):
-                stages["stt_ms"] = (time.perf_counter() - t) * 1000
-            return res
-
-        async def run_templates():
-            if not (wav and use_spectrogram and templates.items):
-                return [], []
-            t = time.perf_counter()
+        # Local spectrogram matching runs first (a few ms, no credits). When it is already
+        # decisive, Scribe is skipped, which keeps the free-tier STT minutes for unclear speech.
+        feats, matches, spec_preview = None, [], []
+        if wav:
             feats = await asyncio.to_thread(dsp.extract, wav)
-            matches = await asyncio.to_thread(dsp.match, feats.mfcc, templates.items)
-            stages["spectrogram_ms"] = (time.perf_counter() - t) * 1000
-            return matches, dsp.spectrogram_preview(feats.logmel)
+            spec_preview = dsp.spectrogram_preview(feats.logmel)
+            recent_audio[session_id] = (time.time(), feats)
+            if use_spectrogram and templates.items:
+                t = time.perf_counter()
+                matches = await asyncio.to_thread(dsp.match, feats.mfcc, templates.items)
+                stages["spectrogram_ms"] = (time.perf_counter() - t) * 1000
+        top = matches[0]["confidence"] if matches else 0.0
+        skip_at = 0.6 if el.saver_mode else settings.skip_stt_confidence
+        skip_stt = bool(matches) and top >= skip_at
 
-        stt, (matches, spec_preview) = await asyncio.gather(run_stt(), run_templates())
-        phrases = db.phrases()
+        stt = {"text": "", "words": [], "mock": not el.enabled, "cached": False}
+        if wav and use_scribe and skip_stt:
+            stt["skipped"] = f"spectrogram match {top:.2f}"
+            db.log_event("credit", {"service": "stt", "seconds": 0, "source": "skipped",
+                                    "saved_seconds": round(dsp.duration_s(wav), 2)}, session_id)
+        elif wav and use_scribe:
+            t = time.perf_counter()
+            stt = await el.transcribe(wav, language, session_id, role="patient", features=feats)
+            if not stt.get("mock"):
+                stages["stt_ms"] = (time.perf_counter() - t) * 1000
+        phrases = phrases_now()
         by_id = {p["id"]: p for p in phrases}
         for m in matches:
             m["text"] = by_id.get(m["phrase_id"], {}).get("text")
@@ -343,7 +399,8 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
         stages["total_ms"] = (time.perf_counter() - t0) * 1000
         log_latency(session_id, "patient", stages)
         return {"candidates": candidates, "heuristic": heuristic, "ranker": ranker,
-                "transcript": stt.get("text", ""), "stt": {k: stt.get(k) for k in ("mock", "cached", "language")},
+                "transcript": stt.get("text", ""),
+                "stt": {k: stt.get(k) for k in ("mock", "cached", "language", "skipped", "budget")},
                 "spectrogram_matches": matches, "spectrogram": spec_preview, "latency": stages,
                 "partner_last": partner_last}
 
@@ -351,17 +408,37 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
     @app.post("/api/confirm")
     def confirm(c: ConfirmIn):
         db.add_turn(c.session_id, "patient", c.text, raw_text=c.raw_text, source=",".join(c.sources))
+        learned = False
         if c.phrase_id:
             db.execute("UPDATE phrases SET use_count=use_count+1 WHERE id=?", (c.phrase_id,))
+            # Learn as you talk: when the confirmed phrase came from the patient's own speech, that
+            # utterance becomes one more spectrogram template for it (no separate recording session).
+            when, feats = recent_audio.pop(c.session_id, (0.0, None))
+            if (feats is not None and time.time() - when < 120 and len(feats.mfcc) >= 10
+                    and any(s in ("speech", "spectrogram") for s in c.sources)):
+                save_template(c.phrase_id, feats, source="learned")
+                db.execute("DELETE FROM audio_templates WHERE phrase_id=? AND source='learned' AND id NOT IN "
+                           "(SELECT id FROM audio_templates WHERE phrase_id=? AND source='learned' "
+                           "ORDER BY id DESC LIMIT ?)", (c.phrase_id, c.phrase_id, MAX_LEARNED_TEMPLATES))
+                templates.reload()
+                learned = True
         db.log_event("effort", {"rank": c.rank, "actions": c.actions, "time_ms": round(c.time_to_confirm_ms),
-                                "ranker": c.ranker, "sources": c.sources}, c.session_id)
-        return {"ok": True}
+                                "ranker": c.ranker, "sources": c.sources, "phrase_id": c.phrase_id}, c.session_id)
+        return {"ok": True, "learned_template": learned}
+
+    @app.post("/api/emergency")
+    def emergency(session_id: str = Form(""), trigger: str = Form("button")):
+        db.log_event("emergency", {"trigger": trigger}, session_id or None)
+        p = next((p for p in db.phrases() if p["is_emergency"]), None)
+        return {"text": p["text"] if p else "I need help now"}
 
 
     @app.post("/api/speak")
     async def speak(s: SpeakIn):
         t0 = time.perf_counter()
-        res = await el.speak(s.text, current_voice(), s.session_id)
+        voice = current_voice()
+        row = db.one("SELECT key_id FROM voices WHERE voice_id=?", (voice,))
+        res = await el.speak(s.text, voice, s.session_id, owner_key=row["key_id"] if row else None)
         if res.get("mock"):
             return JSONResponse({"mock": True})
         log_latency(s.session_id or "", "tts", {"tts_ms": (time.perf_counter() - t0) * 1000,
@@ -400,9 +477,9 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
 
     @app.post("/api/voices/design/save")
     async def design_save(d: DesignSave):
-        vid = await el.design_save(d.generated_voice_id, d.name, d.description)
-        db.execute("INSERT OR REPLACE INTO voices(voice_id, name, kind, description, created_at) "
-                   "VALUES(?,?,?,?,?)", (vid, d.name, "designed", d.description, time.time()))
+        vid, kid = await el.design_save(d.generated_voice_id, d.name, d.description, d.key_id)
+        db.execute("INSERT OR REPLACE INTO voices(voice_id, name, kind, description, key_id, created_at) "
+                   "VALUES(?,?,?,?,?,?)", (vid, d.name, "designed", d.description, kid, time.time()))
         db.set_setting("voice_id", vid)
         return {"voice_id": vid}
 
@@ -411,9 +488,9 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
                     files: list[UploadFile] = File(...)):
         record = consent_mod.require_active(db, consent_id)   # hard consent gate
         payload = [(f.filename or "sample.wav", await f.read(), f.content_type or "audio/wav") for f in files]
-        vid = await el.clone(name, payload, f"Consented clone of {record['voice_owner']} (consent #{consent_id})")
-        db.execute("INSERT OR REPLACE INTO voices(voice_id, name, kind, description, consent_id, created_at) "
-                   "VALUES(?,?,?,?,?,?)", (vid, name, "cloned", record["purpose"], consent_id, time.time()))
+        vid, kid = await el.clone(name, payload, f"Consented clone of {record['voice_owner']} (consent #{consent_id})")
+        db.execute("INSERT OR REPLACE INTO voices(voice_id, name, kind, description, consent_id, key_id, created_at) "
+                   "VALUES(?,?,?,?,?,?,?)", (vid, name, "cloned", record["purpose"], consent_id, kid, time.time()))
         db.log_event("consent", {"action": "voice_cloned", "consent_id": consent_id, "voice_id": vid})
         db.set_setting("voice_id", vid)
         return {"voice_id": vid}
@@ -437,11 +514,13 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
 
     @app.post("/api/consent/{consent_id}/revoke")
     async def revoke_consent(consent_id: int):
+        owners = {r["voice_id"]: r["key_id"] for r in db.query(
+            "SELECT voice_id, key_id FROM voices WHERE consent_id=?", (consent_id,))}
         voices_to_delete = consent_mod.revoke(db, consent_id)
         errors = []
         for vid in voices_to_delete:
             try:
-                await el.delete_voice(vid)
+                await el.delete_voice(vid, owners.get(vid))
             except ElevenLabsError as e:
                 errors.append({"voice_id": vid, "error": str(e)})
         if current_voice() in voices_to_delete:
@@ -473,7 +552,8 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
                       "median_time_ms": round(float(np.median([e["time_ms"] for e in eff]))),
                       "top1_rate": round(sum(1 for e in eff if e["rank"] == 0) / len(eff), 3),
                       "custom_rate": round(sum(1 for e in eff if e["rank"] < 0) / len(eff), 3)}
-        return {"latency": latency, "effort": effort, "cache": db.cache_stats(), "credits": credit_usage()}
+        return {"latency": latency, "effort": effort, "cache": db.cache_stats(), "credits": credit_usage(),
+                "budget": el.budget()}
 
     app.mount("/", StaticFiles(directory=str(ROOT / "frontend"), html=True), name="frontend")
     return app

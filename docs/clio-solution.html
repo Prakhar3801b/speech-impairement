@@ -1,11 +1,11 @@
-<title>Saathi One-Signal Plan</title>
+<title>Clio One-Signal Plan</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&family=Atkinson+Hyperlegible+Mono:wght@400;600&family=Noto+Sans+Devanagari:wght@500;700&display=swap">
 <style>
 /* Layout: one reading column (~68ch) with full-width bands for the analysis table and the build plan.
-   Colors reuse the Saathi app's own tokens (frontend/styles.css): green = patient, blue = partner. */
+   Colors reuse the Clio app's own tokens (frontend/styles.css): green = patient, blue = partner. */
 :root {
   --bg: #f4f6f8;
   --surface: #ffffff;
@@ -144,11 +144,11 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
 
 <header>
   <span class="eyebrow">AI Manthan 2.0 · Problem Statement 16 · solution design</span>
-  <h1>Saathi: one signal is enough</h1>
-  <p class="lede">The patient shouldn't have to compose a message. Saathi works out the likely answers from what the partner just asked, and the patient picks one with a single movement of their choice. Their own voice then speaks it.</p>
+  <h1>Clio: one signal is enough</h1>
+  <p class="lede">The patient shouldn't have to compose a message. Clio works out the likely answers from what the partner just asked, and the patient picks one with a single movement of their choice. Their own voice then speaks it.</p>
   <div class="thesis">
     <span class="pill pr">Partner asks</span>
-    <span class="pill">Saathi shapes 2–3 answers</span>
+    <span class="pill">Clio shapes 2–3 answers</span>
     <span class="pill pt">Patient gives “my yes”</span>
     <span class="pill pt">Spoken in their voice</span>
   </div>
@@ -183,7 +183,7 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
 
   <div class="tbl">
     <table>
-      <thead><tr><th>PS16 requirement</th><th>Saathi repo today</th><th>Status</th><th>What this plan adds</th></tr></thead>
+      <thead><tr><th>PS16 requirement</th><th>Clio repo today</th><th>Status</th><th>What this plan adds</th></tr></thead>
       <tbody>
         <tr><td>Analyse the patient's voice</td><td>Scribe batch on push-to-talk, plus spectrogram DTW against the patient's own recordings</td><td><span class="st done">done</span></td><td>Per-condition weighting of voice</td></tr>
         <tr><td>Gestures, face, lips</td><td>MediaPipe hands and face blendshapes, nod/shake, lip syllable count, ISL k-NN</td><td><span class="st done">done</span></td><td>“My yes” calibration; ISL works before any training</td></tr>
@@ -199,15 +199,15 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
 
 <section>
   <span class="eyebrow">The solution</span>
-  <h2>What makes Saathi different</h2>
-  <p class="col">The build guide adds more and more ways for the patient to express themselves. Saathi goes the other way: each turn should take the patient as little as possible. It does this in five ways, and each one fits into code you already have.</p>
+  <h2>What makes Clio different</h2>
+  <p class="col">The build guide adds more and more ways for the patient to express themselves. Clio goes the other way: each turn should take the patient as little as possible. It does this in five ways, and each one fits into code you already have.</p>
 
   <div class="ideas">
 
     <div class="idea">
       <div class="txt">
         <h3>Answers shaped to the question</h3>
-        <p>Most of what a partner says is a question, and the type of question already limits the answer. Before ranking anything, Saathi sorts the partner's last utterance into one of three types:</p>
+        <p>Most of what a partner says is a question, and the type of question already limits the answer. Before ranking anything, Clio sorts the partner's last utterance into one of three types:</p>
         <ul class="plain">
           <li><b>Yes/no</b> (<span class="hi">“Dawai li?”</span>, “Are you cold?”): show two huge cards, <span class="hi">Haan</span> / <span class="hi">Nahi</span>.</li>
           <li><b>Choice</b> (<span class="hi">“Thanda ya normal?”</span>, “tea or coffee”): pull out the options and use them as the cards.</li>
@@ -229,9 +229,9 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
     <div class="idea">
       <div class="txt">
         <h3>“My yes”: one movement, chosen by the patient</h3>
-        <p>The guide asks for 6 calibration gestures, and the repo asks for 2–3 recordings of every ISL letter. Saathi's setup asks for one thing. The patient picks the movement that's easiest for them and does it three times, and Saathi learns that person's threshold for it. That movement then confirms everything. A second, opposite movement for “next” is optional.</p>
+        <p>The guide asks for 6 calibration gestures, and the repo asks for 2–3 recordings of every ISL letter. Clio's setup asks for one thing. The patient picks the movement that's easiest for them and does it three times, and Clio learns that person's threshold for it. That movement then confirms everything. A second, opposite movement for “next” is optional.</p>
         <p>Every option below is already detected by <code>frontend/js/vision.js</code> through MediaPipe blendshapes and head pose, so this is a threshold per user, not a new model.</p>
-        <p class="why">Why it's easy: a patient with ALS can't give a thumbs-up but can still raise their eyebrows. Saathi uses whatever movement still works for them.</p>
+        <p class="why">Why it's easy: a patient with ALS can't give a thumbs-up but can still raise their eyebrows. Clio uses whatever movement still works for them.</p>
       </div>
       <div class="yes-grid">
         <div class="yes pick"><b>Nod</b><span>head pitch</span></div>
@@ -265,7 +265,7 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
     <div class="idea">
       <div class="txt">
         <h3>Signs work on day one, then learn as you talk</h3>
-        <p>Today the ISL classifier starts empty. Saathi seeds it from <code>data/ISL_Dataset</code>: an offline script runs MediaPipe Hands over each image and stores the 254-dimension two-hand feature vector as a <i>seed</i> sample in <code>sign_samples</code>.</p>
+        <p>Today the ISL classifier starts empty. Clio seeds it from <code>data/ISL_Dataset</code>: an offline script runs MediaPipe Hands over each image and stores the 254-dimension two-hand feature vector as a <i>seed</i> sample in <code>sign_samples</code>.</p>
         <p>Each time the patient confirms a message that involved a sign, that live sample is saved under the confirmed label. Once a letter has 3 of the user's own samples, its seed samples are dropped. Nobody has to run a training session.</p>
         <p class="why">Before seeding: remove the 16 duplicate images, including the 8 that sit in both O and Q. Expect some images to fail hand detection at 128×128. H, J, Y and the digits aren't in the dataset, so they still need recording in the app.</p>
       </div>
@@ -284,11 +284,11 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
       <div class="txt">
         <h3>The partner's phone becomes the second mic</h3>
         <p>A single laptop mic picks up both people, which is why the repo needs separate O and P keys. Instead, the partner scans a QR code and opens a <code>/partner</code> page on their own phone. That page has one big hold-to-talk button, which sends audio to the existing <code>/api/partner</code>. It also shows large captions of what the patient says, using <code>/api/history</code>.</p>
-        <p class="why">Why it's easy: Saathi knows who is speaking from which device sent the audio, so the patient never presses a “partner is talking” key. A family member at home can use the same page.</p>
+        <p class="why">Why it's easy: Clio knows who is speaking from which device sent the audio, so the patient never presses a “partner is talking” key. A family member at home can use the same page.</p>
       </div>
       <div class="txt">
         <h3>Voice legacy, with spoken consent</h3>
-        <p>For ALS and Parkinson's, the voice fades over time. Saathi asks for voice banking in week one, while the patient can still read the sample sentences. The recordings are stored but not cloned. When the patient is ready, they say the consent sentence aloud. Scribe checks it against the expected text, and only then can <code>/api/voices/clone</code> run. If there are no usable recordings, Voice Design builds a new voice from age, accent and warmth.</p>
+        <p>For ALS and Parkinson's, the voice fades over time. Clio asks for voice banking in week one, while the patient can still read the sample sentences. The recordings are stored but not cloned. When the patient is ready, they say the consent sentence aloud. Scribe checks it against the expected text, and only then can <code>/api/voices/clone</code> run. If there are no usable recordings, Voice Design builds a new voice from age, accent and warmth.</p>
         <p class="why">This meets the PS's “use only consented voices” rule with a step the patient performs, on top of the consent record the repo already keeps.</p>
       </div>
     </div>
@@ -301,9 +301,9 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
   <h2>A turn, end to end</h2>
   <div class="flow">
     <div class="step pr"><span class="n">1</span><b>Partner asks</b><p>Holds the button on their phone: <span class="hi">“Thanda ya normal?”</span></p><span class="t">Scribe · target ≤ 600 ms</span></div>
-    <div class="step pr"><span class="n">2</span><b>Saathi shapes</b><p>Classifies the question as a choice and puts the two options on screen, already highlighted.</p><span class="t">rules · target ≤ 30 ms</span></div>
+    <div class="step pr"><span class="n">2</span><b>Clio shapes</b><p>Classifies the question as a choice and puts the two options on screen, already highlighted.</p><span class="t">rules · target ≤ 30 ms</span></div>
     <div class="step pt"><span class="n">3</span><b>Patient picks</b><p>Their “my yes” on the highlighted card, or one shake to move to the next card.</p><span class="t">1 action</span></div>
-    <div class="step pt"><span class="n">4</span><b>Saathi speaks</b><p>“Normal, please” in their voice, from cache or Flash v2.5.</p><span class="t">first audio · target ≤ 300 ms</span></div>
+    <div class="step pt"><span class="n">4</span><b>Clio speaks</b><p>“Normal, please” in their voice, from cache or Flash v2.5.</p><span class="t">first audio · target ≤ 300 ms</span></div>
   </div>
   <p class="col" style="color:var(--muted);font-size:.95rem">These times are targets, not measurements. The PS budget of under 2 s is measured from the end of the patient's input to the first audio. Steps 2 and 4 together are well inside that, so the real risk is Scribe's response time on the venue's network.</p>
 </section>
@@ -358,6 +358,6 @@ footer { font: 0.85rem/1.5 var(--font-mono); color: var(--muted); }
   <div class="note">Every simulated or acted number keeps a SIMULATED label in file names, database rows and the UI, as the PS and the build guide both require.</div>
 </section>
 
-<footer>Sources: PS16_Voice_Restoration.pdf, VaaniSetu — PS16 Build Guide.pdf, the Saathi repo (backend/, frontend/, eval/), data/ISL_Dataset analysis · 1 Nov 2026</footer>
+<footer>Sources: PS16_Voice_Restoration.pdf, VaaniSetu — PS16 Build Guide.pdf, the Clio repo (backend/, frontend/, eval/), data/ISL_Dataset analysis · 1 Nov 2026</footer>
 
 </div>

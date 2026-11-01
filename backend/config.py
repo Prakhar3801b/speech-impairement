@@ -35,10 +35,29 @@ class Settings:
     llm_effort: str = os.environ.get("LLM_EFFORT", "low")
     llm_timeout_s: float = float(os.environ.get("LLM_TIMEOUT_S", "4"))
     db_path: str = os.environ.get("DB_PATH", str(ROOT / "data" / "app.db"))
+    # Free-tier budget. Extra keys (comma separated) take over when one runs out.
+    elevenlabs_api_keys: str = os.environ.get("ELEVENLABS_API_KEYS", "")
+    credits_per_key: float = float(os.environ.get("ELEVENLABS_CREDITS_PER_KEY", "10000"))
+    credit_reserve: float = float(os.environ.get("ELEVENLABS_CREDIT_RESERVE", "0.05"))
+    # Local estimates only; replaced by the account's own counter when it can be read.
+    tts_credits_per_char: float = float(os.environ.get("TTS_CREDITS_PER_CHAR", "0.5"))
+    stt_credits_per_minute: float = float(os.environ.get("STT_CREDITS_PER_MINUTE", "400"))
+    # Below this share of credits left, the patient's speech skips Scribe when a local match is clear.
+    saver_mode_below: float = float(os.environ.get("SAVER_MODE_BELOW", "0.25"))
+    # Re-use the transcript of an acoustically near-identical earlier clip (DTW distance).
+    stt_reuse_max_dist: float = float(os.environ.get("STT_REUSE_MAX_DIST", "3.0"))
+    # A spectrogram template match this confident answers the patient turn without Scribe.
+    skip_stt_confidence: float = float(os.environ.get("SKIP_STT_CONFIDENCE", "0.85"))
+    max_stt_seconds: float = float(os.environ.get("MAX_STT_SECONDS", "15"))
+
+    @property
+    def api_keys(self) -> list[str]:
+        keys = [k.strip() for k in self.elevenlabs_api_keys.split(",")] + [self.elevenlabs_api_key]
+        return [k for k in dict.fromkeys(keys) if k]
 
     @property
     def elevenlabs_enabled(self) -> bool:
-        return bool(self.elevenlabs_api_key)
+        return bool(self.api_keys)
 
     @property
     def llm_enabled(self) -> bool:

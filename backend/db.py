@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS audio_templates (
     n_frames    INTEGER NOT NULL,
     n_mfcc      INTEGER NOT NULL,
     n_mels      INTEGER NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'enrolled',  -- enrolled | learned (from a confirmed turn)
     created_at  REAL NOT NULL
 );
 
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS sign_samples (
     kind        TEXT NOT NULL DEFAULT 'letter',  -- letter | phrase | control
     phrase_id   INTEGER REFERENCES phrases(id) ON DELETE SET NULL,
     features    TEXT NOT NULL,              -- JSON float list (hand-landmark feature vector)
+    source      TEXT NOT NULL DEFAULT 'recorded',  -- recorded | learned (from a confirmed turn)
     created_at  REAL NOT NULL
 );
 
@@ -90,6 +92,7 @@ CREATE TABLE IF NOT EXISTS voices (
     kind        TEXT NOT NULL,              -- default | designed | cloned
     description TEXT NOT NULL DEFAULT '',
     consent_id  INTEGER REFERENCES consent_records(id),
+    key_id      TEXT,                       -- ElevenLabs account (key hash) that owns the voice
     created_at  REAL NOT NULL,
     deleted_at  REAL
 );
@@ -135,6 +138,12 @@ class Database:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA foreign_keys=ON")
             self.conn.executescript(SCHEMA)
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(voices)")}
+            if "key_id" not in cols:   # added for multi-key fallback: the account that owns the voice
+                self.conn.execute("ALTER TABLE voices ADD COLUMN key_id TEXT")
+            for table, default in (("audio_templates", "enrolled"), ("sign_samples", "recorded")):
+                if "source" not in {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN source TEXT NOT NULL DEFAULT '{default}'")
             self.conn.commit()
 
     # -- generic helpers -------------------------------------------------
@@ -191,11 +200,26 @@ class Database:
 
     def history(self, session_id: str, limit: int = 8) -> list[dict]:
         rows = self.query(
-            "SELECT speaker, text, created_at FROM turns WHERE session_id=? "
+            "SELECT id, speaker, text, created_at FROM turns WHERE session_id=? "
             "ORDER BY id DESC LIMIT ?",
             (session_id, limit),
         )
         return list(reversed(rows))
+
+    def phrase_time_prior(self, now: float | None = None) -> dict[int, float]:
+        """How often each phrase was said at this time of day (night / morning / afternoon / evening),
+        scaled 0..1 against the most-used phrase of that part of the day. Needs 2+ uses to count."""
+        bucket = lambda ts: (0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 0, 0, 0)[time.localtime(ts).tm_hour]  # noqa: E731
+        here = bucket(now or time.time())
+        by_text = {r["text"]: r["id"] for r in self.query("SELECT id, text FROM phrases")}
+        counts: dict[int, int] = {}
+        for r in self.query("SELECT text, created_at FROM turns WHERE speaker='patient' ORDER BY id DESC LIMIT 1000"):
+            pid = by_text.get(r["text"])
+            if pid and bucket(r["created_at"]) == here:
+                counts[pid] = counts.get(pid, 0) + 1
+        counts = {k: v for k, v in counts.items() if v >= 2}
+        top = max(counts.values(), default=0)
+        return {k: round(v / top, 3) for k, v in counts.items()} if top else {}
 
     # -- phrases -------------------------------------------------------------
     def phrases(self) -> list[dict]:
