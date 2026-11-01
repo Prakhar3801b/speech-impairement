@@ -5,6 +5,9 @@ sign spelling may produce), keywords (partner words that make it likely), emerge
 """
 from __future__ import annotations
 
+import json
+import time
+
 from .db import Database
 
 PHRASES: list[dict] = [
@@ -87,6 +90,11 @@ def seed_phrases(db: Database) -> int:
     """Insert the starter phrasebook if the table is empty. Returns rows inserted."""
     if db.one("SELECT COUNT(*) AS n FROM phrases")["n"]:
         return 0
-    for p in PHRASES:
-        db.add_phrase(**p)
+    now = time.time()
+    db.executemany(
+        "INSERT INTO phrases(text, language, category, aliases, keywords, is_emergency, created_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        [(p["text"], p["language"], p["category"], json.dumps(p.get("aliases", []), ensure_ascii=False),
+          json.dumps(p.get("keywords", []), ensure_ascii=False), int(p.get("is_emergency", False)), now)
+         for p in PHRASES])
     return len(PHRASES)

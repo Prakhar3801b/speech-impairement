@@ -1,0 +1,5 @@
+# Only for building the speech model (scripts/build_speech_model.py) or a personal Whisper model.
+-r requirements.txt
+torch>=2.4
+transformers>=4.45
+onnx>=1.16

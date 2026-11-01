@@ -1,26 +1,37 @@
 """FastAPI app: REST API + static frontend.
 
-Run:  uvicorn backend.main:app --reload    (from the ps16-voice-assistant folder)
+Run:  uvicorn backend.main:app --reload    (from the project folder)
+
+Every /api route except /api/auth/* needs a signed-in account (cookie), or for the partner's
+phone a signed partner link. Route code uses `db`, `el`, `templates`, ...: stand-ins that resolve
+to the signed-in account's own store and matcher (see AccountMiddleware).
 """
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
+import threading
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import consent as consent_mod
-from . import dsp, fusion, llm
+from . import dsp, fusion, intro, llm
+from .auth import COOKIE, SESSION_DAYS, Accounts, AuthError
 from .config import ROOT, settings
 from .db import Database
 from .elevenlabs import ElevenLabs, ElevenLabsError
+from .local_asr import LocalASR
+from .matcher import Matcher
 from .seed import seed_phrases
 
 
@@ -52,6 +63,18 @@ class ConfirmIn(BaseModel):
     sources: list[str] = []
     raw_text: str = ""
     ranker: str = ""
+    language: str = ""
+
+
+class TrainingConsentIn(BaseModel):
+    signer: str = Field(min_length=1, max_length=120)
+    relationship: str = "self"
+    agreed: bool = False
+
+
+TRAINING_STATEMENT = (
+    "Keep my confirmed spoken phrases on this device, with the text I confirmed, to train a speech "
+    "recogniser for my voice. They are not uploaded. I can stop this and delete them at any time.")
 
 
 class SpeakIn(BaseModel):
@@ -76,40 +99,167 @@ class DesignSave(BaseModel):
 
 
 
-MAX_LEARNED_TEMPLATES = 4      # per phrase, on top of the ones the patient recorded
+class SignupIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+MAX_LEARNED_TEMPLATES = 6      # per phrase, on top of the ones the patient recorded
 MAX_LEARNED_SIGN_SAMPLES = 40  # per sign
 
 
+# ---------------------------------------------------------------- accounts
+@dataclass
+class Account:
+    user: dict
+    db: Database
+    el: ElevenLabs
+    templates: Matcher
+    recent_audio: dict = field(default_factory=dict)     # session -> (time, features) of the last utterance
+    partner_latest: dict = field(default_factory=dict)   # session -> last partner turn + suggestions
+
+
+_current: contextvars.ContextVar[Account] = contextvars.ContextVar("clio_account")
+
+
+class _Current:
+    """Stands in for one attribute of the signed-in account, so route code reads `db.query(...)`."""
+
+    def __init__(self, attr: str):
+        self._attr = attr
+
+    def _get(self):
+        return getattr(_current.get(), self._attr)
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+    def __len__(self):
+        return len(self._get())
+
+    def __getitem__(self, k):
+        return self._get()[k]
+
+    def __setitem__(self, k, v):
+        self._get()[k] = v
+
+
+PARTNER_PATHS = ("/api/partner", "/api/history/")   # what a partner link may use (one conversation only)
+
+
+class AccountMiddleware:
+    """Resolves the account for every /api request (login cookie, or a partner link) before the route runs."""
+
+    def __init__(self, app, resolve):
+        self.app, self.resolve = app, resolve
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not path.startswith("/api/") or path.startswith("/api/auth/"):
+            return await self.app(scope, receive, send)
+        acct = await run_in_threadpool(self.resolve, Request(scope))
+        if acct is None:
+            return await JSONResponse({"error": "auth", "detail": "Please sign in."}, status_code=401)(scope, receive, send)
+        token = _current.set(acct)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _current.reset(token)
+
+
 # ---------------------------------------------------------------- state
-class TemplateIndex:
-    """In-memory copy of enrolled spectrogram templates (reloaded on change)."""
-
-    def __init__(self, db: Database):
-        self.db = db
-        self.items: list[tuple[int, np.ndarray]] = []
-        self.reload()
-
-    def reload(self) -> None:
-        rows = self.db.query("SELECT phrase_id, mfcc, n_frames, n_mfcc FROM audio_templates")
-        self.items = [(r["phrase_id"], np.frombuffer(r["mfcc"], dtype=np.float32)
-                       .reshape(r["n_frames"], r["n_mfcc"])) for r in rows]
-
-
 def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) -> FastAPI:
-    db = Database(db_path or settings.db_path)
-    seed_phrases(db)
-    el = ElevenLabs(db, api_key=elevenlabs_key)
-    templates = TemplateIndex(db)
-    recent_audio: dict[str, tuple[float, dsp.Features]] = {}   # session -> last patient utterance
-    partner_latest: dict[str, dict] = {}                      # session -> last partner turn + suggestions
+    core_url = db_path or settings.database_url or settings.db_path   # an explicit path (tests) wins
+    accounts = Accounts(core_url)
+    user_dir = Path(db_path or settings.db_path).parent / "users"
+    base_el = ElevenLabs(accounts.core, api_key=elevenlabs_key)   # shares keys, budget, HTTP clients
+    local_asr = LocalASR(settings.local_asr_model)
+    open_accounts: dict[int, Account] = {}
+    open_lock = threading.Lock()
+
+    def account(uid: int) -> Account | None:
+        with open_lock:
+            if uid not in open_accounts:
+                user = accounts.user(uid)
+                if not user:
+                    return None
+                udb = accounts.open_user_db(uid, user_dir)
+                seed_phrases(udb)
+                open_accounts[uid] = Account(user, udb, base_el.for_account(udb), Matcher(udb))
+            return open_accounts[uid]
+
+    def resolve(req: Request) -> Account | None:
+        user = accounts.user_for_token(req.cookies.get(COOKIE))
+        if user:
+            return account(user["id"])
+        if req.url.path.startswith(PARTNER_PATHS):
+            uid = accounts.check_partner_key(req.query_params.get("k"), req.query_params.get("s", ""))
+            if uid:
+                req.scope.setdefault("state", {})["partner_session"] = req.query_params.get("s")
+                return account(uid)
+        return None
+
+    db, el, templates = _Current("db"), _Current("el"), _Current("templates")
+    recent_audio, partner_latest = _Current("recent_audio"), _Current("partner_latest")
+
+    def partner_scope_ok(request: Request, session_id: str) -> None:
+        """A partner link only covers the conversation it was made for."""
+        allowed = request.scope.get("state", {}).get("partner_session")
+        if allowed is not None and allowed != session_id:
+            raise HTTPException(403, "this partner link is for another conversation")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         yield
-        await el.aclose()
+        await base_el.aclose()
 
     app = FastAPI(title="Clio: PS16 conversation assistant", lifespan=lifespan)
-    app.state.db, app.state.el, app.state.templates = db, el, templates
+    app.add_middleware(AccountMiddleware, resolve=resolve)
+    app.state.accounts, app.state.el, app.state.account = accounts, base_el, account
+
+    @app.exception_handler(AuthError)
+    async def _auth_error(_req: Request, exc: AuthError):
+        return JSONResponse(status_code=400, content={"error": "auth", "detail": str(exc)})
+
+    # ------------------------------------------------------------ sign up / sign in
+    def _signed_in(request: Request, user: dict) -> JSONResponse:
+        resp = JSONResponse({"user": user})
+        resp.set_cookie(COOKIE, accounts.start_session(user["id"]), max_age=SESSION_DAYS * 86400,
+                        httponly=True, samesite="lax", secure=request.url.scheme == "https")
+        return resp
+
+    @app.post("/api/auth/signup")
+    def signup(body: SignupIn, request: Request):
+        return _signed_in(request, accounts.signup(body.email, body.password, body.name))
+
+    @app.post("/api/auth/login")
+    def login(body: LoginIn, request: Request):
+        return _signed_in(request, accounts.login(body.email, body.password))
+
+    @app.post("/api/auth/logout")
+    def logout(request: Request):
+        accounts.end_session(request.cookies.get(COOKIE))
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(COOKIE)
+        return resp
+
+    @app.get("/api/auth/me")
+    def me(request: Request):
+        user = accounts.user_for_token(request.cookies.get(COOKIE))
+        if not user:
+            return JSONResponse({"error": "auth", "detail": "Please sign in."}, status_code=401)
+        return {"user": user, "database": "postgres" if accounts.core.pg else "sqlite"}
+
+    @app.get("/api/partner/link")
+    def partner_link(session_id: str):
+        """Signed key for the partner's phone: lets it use this one conversation without signing in."""
+        return {"key": accounts.partner_key(_current.get().user["id"], session_id)}
 
     @app.exception_handler(ElevenLabsError)
     async def _el_error(_req: Request, exc: ElevenLabsError):
@@ -132,7 +282,10 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             "llm_model": settings.llm_model if settings.llm_enabled else None,
             "voice_id": current_voice(), "concurrency": settings.elevenlabs_concurrency,
             "cache": db.cache_stats(), "credits": credit_usage(), "budget": el.budget(),
-            "templates": len(templates.items),
+            "templates": len(templates), "matcher": templates.kind if len(templates) else None,
+            "speech_model": templates.embedder.name if templates.embedder.available else None,
+            "local_asr": local_asr.available, "training": training_summary(),
+            "user": _current.get().user, "database": "postgres" if accounts.core.pg else "sqlite",
         }
 
     def credit_usage() -> dict:
@@ -164,7 +317,7 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
     @app.delete("/api/phrases/{phrase_id}")
     def delete_phrase(phrase_id: int):
         db.execute("DELETE FROM phrases WHERE id=?", (phrase_id,))
-        templates.reload()
+        templates.remove(phrase_id=phrase_id)
         return {"ok": True}
 
     @app.post("/api/phrases/precache")
@@ -190,13 +343,6 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             p["time_prior"] = prior.get(p["id"], 0.0)
         return phrases
 
-    def save_template(phrase_id: int, feats: dsp.Features, source: str = "enrolled") -> None:
-        db.execute(
-            "INSERT INTO audio_templates(phrase_id, mfcc, logmel, n_frames, n_mfcc, n_mels, source, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (phrase_id, feats.mfcc.tobytes(), feats.logmel.tobytes(), len(feats.mfcc),
-             feats.mfcc.shape[1], feats.logmel.shape[1], source, time.time()))
-
     # ------------------------------------------------------------ spectrogram templates
     @app.post("/api/templates")
     async def enroll_template(phrase_id: int = Form(...), audio: UploadFile = File(...)):
@@ -209,8 +355,7 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
             raise HTTPException(400, f"could not read WAV audio: {e}") from e
         if len(feats.mfcc) < 10:
             raise HTTPException(400, "recording too short or silent")
-        save_template(phrase_id, feats)
-        templates.reload()
+        await asyncio.to_thread(templates.save, phrase_id, feats)
         return {"ok": True, "frames": len(feats.mfcc), "spectrogram": dsp.spectrogram_preview(feats.logmel)}
 
     @app.get("/api/templates/{phrase_id}")
@@ -224,7 +369,7 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
     @app.delete("/api/templates/{template_id}")
     def delete_template(template_id: int):
         db.execute("DELETE FROM audio_templates WHERE id=?", (template_id,))
-        templates.reload()
+        templates.remove(template_id=template_id)
         return {"ok": True}
 
     # ------------------------------------------------------------ ISL signs
@@ -267,9 +412,10 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
         db.log_event("latency", {"kind": kind, **{k: round(v, 1) for k, v in stages.items()}}, session_id)
 
     @app.post("/api/partner")
-    async def partner_turn(session_id: str = Form(...), language: str = Form("auto"),
+    async def partner_turn(request: Request, session_id: str = Form(...), language: str = Form("auto"),
                            text: str = Form(""), use_llm: bool = Form(True),
                            audio: UploadFile | None = File(None)):
+        partner_scope_ok(request, session_id)
         t0 = time.perf_counter()
         stages: dict[str, float] = {}
         stt = {"text": text.strip(), "mock": False, "cached": False}
@@ -346,14 +492,15 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
 
         # Local spectrogram matching runs first (a few ms, no credits). When it is already
         # decisive, Scribe is skipped, which keeps the free-tier STT minutes for unclear speech.
-        feats, matches, spec_preview = None, [], []
+        feats, matches, spec_preview, match_info = None, [], [], {}
         if wav:
             feats = await asyncio.to_thread(dsp.extract, wav)
             spec_preview = dsp.spectrogram_preview(feats.logmel)
             recent_audio[session_id] = (time.time(), feats)
-            if use_spectrogram and templates.items:
+            if use_spectrogram and len(templates):
                 t = time.perf_counter()
-                matches = await asyncio.to_thread(dsp.match, feats.mfcc, templates.items)
+                emb = await asyncio.to_thread(templates.embed, feats) if templates.kind == "ssl" else None
+                matches, match_info = await asyncio.to_thread(templates.match, feats, emb)
                 stages["spectrogram_ms"] = (time.perf_counter() - t) * 1000
         top = matches[0]["confidence"] if matches else 0.0
         skip_at = 0.6 if el.saver_mode else settings.skip_stt_confidence
@@ -366,9 +513,17 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
                                     "saved_seconds": round(dsp.duration_s(wav), 2)}, session_id)
         elif wav and use_scribe:
             t = time.perf_counter()
-            stt = await el.transcribe(wav, language, session_id, role="patient", features=feats)
-            if not stt.get("mock"):
-                stages["stt_ms"] = (time.perf_counter() - t) * 1000
+            local_text = (await asyncio.to_thread(local_asr.transcribe, feats.audio, language)
+                          if local_asr.available else "")
+            if local_text:   # the patient's own fine-tuned recogniser: free, so Scribe is not called
+                stt = {"text": local_text, "words": [], "mock": False, "cached": False, "local": True}
+                stages["local_asr_ms"] = (time.perf_counter() - t) * 1000
+                db.log_event("credit", {"service": "stt", "seconds": 0, "source": "local",
+                                        "saved_seconds": round(dsp.duration_s(wav), 2)}, session_id)
+            else:
+                stt = await el.transcribe(wav, language, session_id, role="patient", features=feats)
+                if not stt.get("mock"):
+                    stages["stt_ms"] = (time.perf_counter() - t) * 1000
         phrases = phrases_now()
         by_id = {p["id"]: p for p in phrases}
         for m in matches:
@@ -400,31 +555,107 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
         log_latency(session_id, "patient", stages)
         return {"candidates": candidates, "heuristic": heuristic, "ranker": ranker,
                 "transcript": stt.get("text", ""),
-                "stt": {k: stt.get(k) for k in ("mock", "cached", "language", "skipped", "budget")},
-                "spectrogram_matches": matches, "spectrogram": spec_preview, "latency": stages,
+                "stt": {k: stt.get(k) for k in ("mock", "cached", "language", "skipped", "budget", "local")},
+                "spectrogram_matches": matches, "matcher": match_info, "spectrogram": spec_preview, "latency": stages,
                 "partner_last": partner_last}
 
 
     @app.post("/api/confirm")
     def confirm(c: ConfirmIn):
         db.add_turn(c.session_id, "patient", c.text, raw_text=c.raw_text, source=",".join(c.sources))
-        learned = False
+        learned = kept = False
+        when, feats = recent_audio.pop(c.session_id, (0.0, None))
+        spoken = (feats is not None and feats.audio is not None and time.time() - when < 120
+                  and len(feats.mfcc) >= 10 and any(s in ("speech", "spectrogram") for s in c.sources))
         if c.phrase_id:
             db.execute("UPDATE phrases SET use_count=use_count+1 WHERE id=?", (c.phrase_id,))
             # Learn as you talk: when the confirmed phrase came from the patient's own speech, that
             # utterance becomes one more spectrogram template for it (no separate recording session).
-            when, feats = recent_audio.pop(c.session_id, (0.0, None))
-            if (feats is not None and time.time() - when < 120 and len(feats.mfcc) >= 10
-                    and any(s in ("speech", "spectrogram") for s in c.sources)):
-                save_template(c.phrase_id, feats, source="learned")
-                db.execute("DELETE FROM audio_templates WHERE phrase_id=? AND source='learned' AND id NOT IN "
-                           "(SELECT id FROM audio_templates WHERE phrase_id=? AND source='learned' "
-                           "ORDER BY id DESC LIMIT ?)", (c.phrase_id, c.phrase_id, MAX_LEARNED_TEMPLATES))
-                templates.reload()
+            if spoken:
+                templates.save(c.phrase_id, feats, source="learned")
+                templates.trim_learned(c.phrase_id, MAX_LEARNED_TEMPLATES)
                 learned = True
+        # Opt-in: keep the utterance with the confirmed text, to train a personal recogniser later.
+        if spoken and db.get_setting("training_clips") == "on":
+            db.execute("INSERT INTO training_clips(phrase_id, text, language, audio, seconds, created_at) "
+                       "VALUES(?,?,?,?,?,?)", (c.phrase_id, c.text, c.language, dsp.pcm16(feats.audio),
+                                               len(feats.audio) / dsp.SR, time.time()))
+            kept = True
         db.log_event("effort", {"rank": c.rank, "actions": c.actions, "time_ms": round(c.time_to_confirm_ms),
                                 "ranker": c.ranker, "sources": c.sources, "phrase_id": c.phrase_id}, c.session_id)
-        return {"ok": True, "learned_template": learned}
+        return {"ok": True, "learned_template": learned, "kept_for_training": kept}
+
+    # ------------------------------------------------------------ guided voice intro (setup)
+    @app.get("/api/intro/prompts")
+    def intro_prompts(language: str = "en"):
+        return {"prompts": intro.prompts(db.phrases(), language),
+                "profile": json.loads(db.get_setting("voice_profile") or "null")}
+
+    @app.post("/api/intro")
+    async def intro_submit(words: UploadFile = File(...), phrase_ids: str = Form(...),
+                           about: UploadFile | None = File(None), language: str = Form("auto")):
+        """Part 2 (`words`, said with pauses) becomes one template per phrase; part 1 (`about`,
+        free speech) gives the voice profile and name suggestions."""
+        try:
+            ids = [int(i) for i in json.loads(phrase_ids)]
+            x, sr = dsp.read_wav(await words.read())
+        except Exception as e:
+            raise HTTPException(400, f"could not read the recording: {e}") from e
+        known = {p["id"]: p["text"] for p in db.phrases()}
+        if not ids or any(i not in known for i in ids):
+            raise HTTPException(400, "unknown phrase id")
+        pieces = await asyncio.to_thread(intro.segment, dsp.resample(x, sr), len(ids))
+        if not pieces:
+            raise HTTPException(422, f"We could not hear {len(ids)} separate words. Try again with a clear "
+                                     "pause after each word.")
+        saved = []
+        for pid, piece in zip(ids, pieces):
+            feats = await asyncio.to_thread(dsp.extract_signal, piece)
+            if len(feats.mfcc) >= 10:
+                await asyncio.to_thread(templates.save, pid, feats, "enrolled")
+                saved.append({"phrase_id": pid, "text": known[pid], "seconds": round(len(piece) / dsp.SR, 2)})
+
+        profile, transcript, ideas = None, "", []
+        if about is not None:
+            wav = await about.read()
+            ax, asr = dsp.read_wav(wav)
+            profile = await asyncio.to_thread(intro.voice_profile, dsp.resample(ax, asr))
+            db.set_setting("voice_profile", json.dumps(profile))
+            stt = await el.transcribe(wav, language, None, role="intro", reuse_similar=False)
+            transcript = stt.get("text", "")
+            ideas = intro.suggestions(transcript, list(known.values()))
+        db.log_event("intro", {"saved": len(saved), "profile": profile})
+        return {"saved": saved, "profile": profile, "transcript": transcript, "suggestions": ideas}
+
+    # ------------------------------------------------------------ personal model training data (opt-in)
+    def training_summary() -> dict:
+        row = db.one("SELECT COUNT(*) AS n, COALESCE(SUM(seconds), 0) AS s, COUNT(DISTINCT text) AS t "
+                     "FROM training_clips")
+        return {"enabled": db.get_setting("training_clips") == "on", "clips": row["n"],
+                "minutes": round(row["s"] / 60, 1), "distinct_texts": row["t"],
+                "signer": db.get_setting("training_signer"), "statement": TRAINING_STATEMENT}
+
+    @app.get("/api/training")
+    def training():
+        return training_summary()
+
+    @app.post("/api/training/consent")
+    def training_consent(t: TrainingConsentIn):
+        if not t.agreed:
+            raise HTTPException(400, "the patient (or their guardian) must agree first")
+        db.set_setting("training_clips", "on")
+        db.set_setting("training_signer", t.signer.strip())
+        db.log_event("consent", {"action": "training_clips_on", "signer": t.signer.strip(),
+                                 "relationship": t.relationship, "statement": TRAINING_STATEMENT})
+        return training_summary()
+
+    @app.post("/api/training/off")
+    def training_off(delete: bool = Form(False)):
+        db.set_setting("training_clips", "off")
+        if delete:
+            db.execute("DELETE FROM training_clips")
+        db.log_event("consent", {"action": "training_clips_off", "deleted": delete})
+        return training_summary()
 
     @app.post("/api/emergency")
     def emergency(session_id: str = Form(""), trigger: str = Form("button")):
@@ -447,7 +678,8 @@ def create_app(db_path: str | None = None, elevenlabs_key: str | None = None) ->
                         headers={"X-Cache": "hit" if res["cached"] else "miss"})
 
     @app.get("/api/history/{session_id}")
-    def history(session_id: str):
+    def history(session_id: str, request: Request):
+        partner_scope_ok(request, session_id)
         return db.history(session_id, limit=50)
 
     # ------------------------------------------------------------ voices & consent

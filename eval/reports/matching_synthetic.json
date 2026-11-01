@@ -1,0 +1,234 @@
+{
+  "meta": {
+    "root": "eval\\data\\synthetic",
+    "layout": "generic",
+    "k": 2,
+    "speakers": 2,
+    "words": 48,
+    "queries": 144,
+    "date": "2026-11-01",
+    "data_kind": "SYNTHETIC",
+    "embed_ms": {}
+  },
+  "results": {
+    "mfcc": {
+      "queries": 144,
+      "top1": 0.8125,
+      "top3": 0.9027777777777778,
+      "match_ms": 96.18729996145703,
+      "calibration": [
+        {
+          "temperature": 0.35,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.25,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.18,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.12,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.08,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.05,
+          "skip_rate": 0.09722222222222222,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.03,
+          "skip_rate": 0.3541666666666667,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.02,
+          "skip_rate": 0.5486111111111112,
+          "skip_precision": 0.9873417721518988
+        },
+        {
+          "temperature": 0.015,
+          "skip_rate": 0.6597222222222222,
+          "skip_precision": 0.9578947368421052
+        },
+        {
+          "temperature": 0.01,
+          "skip_rate": 0.7777777777777778,
+          "skip_precision": 0.9196428571428571
+        },
+        {
+          "temperature": 0.007,
+          "skip_rate": 0.8402777777777778,
+          "skip_precision": 0.9090909090909091
+        },
+        {
+          "temperature": 0.005,
+          "skip_rate": 0.8819444444444444,
+          "skip_precision": 0.8818897637795275
+        }
+      ],
+      "best": {
+        "temperature": 0.015,
+        "skip_rate": 0.6597222222222222,
+        "skip_precision": 0.9578947368421052
+      }
+    },
+    "robust": {
+      "queries": 144,
+      "top1": 0.8888888888888888,
+      "top3": 0.9652777777777778,
+      "match_ms": 82.73420002660714,
+      "calibration": [
+        {
+          "temperature": 0.35,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.25,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.18,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.12,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.08,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.05,
+          "skip_rate": 0.0763888888888889,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.03,
+          "skip_rate": 0.2777777777777778,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.02,
+          "skip_rate": 0.5625,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.015,
+          "skip_rate": 0.6597222222222222,
+          "skip_precision": 0.9894736842105263
+        },
+        {
+          "temperature": 0.01,
+          "skip_rate": 0.7708333333333334,
+          "skip_precision": 0.963963963963964
+        },
+        {
+          "temperature": 0.007,
+          "skip_rate": 0.8263888888888888,
+          "skip_precision": 0.9411764705882353
+        },
+        {
+          "temperature": 0.005,
+          "skip_rate": 0.8472222222222222,
+          "skip_precision": 0.9426229508196722
+        }
+      ],
+      "best": {
+        "temperature": 0.01,
+        "skip_rate": 0.7708333333333334,
+        "skip_precision": 0.963963963963964
+      }
+    },
+    "robust+prosody": {
+      "queries": 144,
+      "top1": 0.8888888888888888,
+      "top3": 0.9652777777777778,
+      "match_ms": 105.08920002030209,
+      "calibration": [
+        {
+          "temperature": 0.35,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.25,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.18,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.12,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.08,
+          "skip_rate": 0.0,
+          "skip_precision": null
+        },
+        {
+          "temperature": 0.05,
+          "skip_rate": 0.0763888888888889,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.03,
+          "skip_rate": 0.2847222222222222,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.02,
+          "skip_rate": 0.5555555555555556,
+          "skip_precision": 1.0
+        },
+        {
+          "temperature": 0.015,
+          "skip_rate": 0.6527777777777778,
+          "skip_precision": 0.9893617021276596
+        },
+        {
+          "temperature": 0.01,
+          "skip_rate": 0.75,
+          "skip_precision": 0.9629629629629629
+        },
+        {
+          "temperature": 0.007,
+          "skip_rate": 0.8263888888888888,
+          "skip_precision": 0.9411764705882353
+        },
+        {
+          "temperature": 0.005,
+          "skip_rate": 0.8472222222222222,
+          "skip_precision": 0.9426229508196722
+        }
+      ],
+      "best": {
+        "temperature": 0.01,
+        "skip_rate": 0.75,
+        "skip_precision": 0.9629629629629629
+      }
+    }
+  }
+}

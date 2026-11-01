@@ -19,12 +19,25 @@ Video never leaves the browser; only small feature vectors and audio clips are s
 ## Quick start
 
 ```bash
-cd ps16-voice-assistant
 pip install -r requirements.txt
-cp .env.example .env          # add ELEVENLABS_API_KEY (and optionally ANTHROPIC_API_KEY)
+cp .env.example .env          # add ELEVENLABS_API_KEY, optionally ANTHROPIC_API_KEY and DATABASE_URL (Neon)
+python -m scripts.build_speech_model --download   # optional, ~95 MB: WavLM speech model for matching
 uvicorn backend.main:app --reload --port 8000
-# open http://localhost:8000  (Chrome/Edge recommended; camera + mic permission needed)
+# open http://localhost:8000, create an account (Chrome/Edge recommended; camera + mic permission needed)
 ```
+
+**Accounts.** The site opens on a sign-in page. Each account (a patient, or a caregiver setting Clio up for one) has its
+own phrasebook, voice recordings, voices, consent records and history. Passwords are hashed with scrypt; the login is an
+HttpOnly cookie. The partner's phone gets a signed link (in the QR code) that covers one conversation only.
+
+**Database.** Without `DATABASE_URL`, data is in local SQLite files (`data/app.db` for accounts, `data/users/u_<id>.db`
+per account). With a Neon `DATABASE_URL` everything goes to Postgres: accounts in `public`, each account's data in its
+own schema `u_<id>`, so one patient's rows can never appear in another's queries. Use Neon's **direct** connection
+string (host without `-pooler`), because each account's connection sets its schema once.
+
+**Speech model.** `--download` fetches a prebuilt int8 WavLM Base+ (12 layers). With torch and transformers installed
+(`pip install -r requirements-train.txt`), `python -m scripts.build_speech_model` instead exports only the first 6 layers
+(52 MB, about half the run time). Without a model, matching uses the noise-robust spectral features.
 
 Without keys the app runs in **mock mode**. Spectrogram matching, ISL signs, cues and the heuristic ranker all still work,
 and speech output falls back to the browser's speech synthesis. Without Scribe, type the partner's words.
@@ -32,8 +45,12 @@ and speech output falls back to the browser's speech synthesis. Without Scribe, 
 The browser loads MediaPipe from `cdn.jsdelivr.net` and the models from `storage.googleapis.com`.
 
 ### Demo flow
-1. **Setup** (opens on first visit, 3 steps): name and language; how the patient says "yes" (nod, thumbs up,
-   tap/key, or auto-scan); which voice to use. "Start talking" turns on the camera and microphone.
+1. **Setup** (opens on first visit, 4 steps): name and language; how the patient says "yes" (nod, thumbs up,
+   tap/key, or auto-scan); **"Let Clio learn your voice"**; which voice to use. "Start talking" turns on the camera and microphone.
+   The voice step takes about a minute: (1) optional free speech about themselves, which gives a voice profile (pitch,
+   pace, room noise) and, through one Scribe call, names to add as phrases ("Please call Amit"); (2) six words said in one
+   recording with a pause after each (Yes, No, Water, Pain, Toilet, Help, or the Hindi forms). The server splits that
+   recording at the pauses and saves each word as a template, so matching works from the first conversation.
 2. **Talk:** press **O** while the partner talks, or let the partner use their phone (below). Suggested replies appear
    at once. For yes/no and either/or questions ("Paani thanda ya normal?") the two answers are big cards side by side.
    Press **P** while the patient speaks, signs or nods. Choose with the "yes" movement from setup, **1–3**, a click or **Enter**.
@@ -72,17 +89,38 @@ Browser (frontend/)                                Backend (backend/, FastAPI)
                                                      SQLite: data/app.db
 ```
 
-### Database (`data/app.db`, SQLite)
+### Phrase matching (`backend/matcher.py`)
+The patient's clip is matched against their own recordings with dynamic time warping, using the best features available:
+1. **WavLM speech-model embeddings** (`backend/embed.py`, ONNX Runtime on the CPU) when the model file is present;
+2. otherwise **noise-robust cepstra** (`dsp.robust_cepstra`): spectral noise subtraction, PNCC-style power-law
+   compression, plus energy/voicing/pitch tracks;
+3. plain MFCC only for templates saved before their audio was kept.
+
+Template audio is stored, so features are recomputed when the front-end or model changes. Once a phrase has 5+
+recordings, a per-phrase prototype (average clip vector) is blended into the score. Confidence temperatures were
+calibrated with `eval/run_matching.py` (the old setting made confidences so flat that Scribe was almost never skipped).
+
+```bash
+python -m eval.make_synthetic                                   # Windows: TTS voices + simulated distortion and noise
+python -m eval.run_matching eval/data/synthetic --model models/wavlm-base-plus-l6.int8.onnx
+python -m eval.run_matching path/to/UA-Speech --k 2             # real dysarthric speech (registration required)
+```
+On the synthetic set, noise-robust cepstra reached 88.9% top-1 against 81.2% for MFCC (48 words, 144 turns).
+That is a comparison of front-ends on synthetic audio, not a prediction for patients.
+
+### Database (one store per account: SQLite files or Neon Postgres schemas)
 | Table | Contents |
 |---|---|
 | `tts_cache` | Generated speech audio keyed by sha256(text, voice, model), with hit counts |
 | `stt_cache` | Scribe transcripts keyed by sha256(audio), with word timings and confidences |
 | `phrases` | Personal phrasebook (En/Hi/Hinglish), with aliases, context keywords, emergency flag and usage count |
-| `audio_templates` | Enrolled spectrogram templates (MFCC + log-mel as float32 blobs) |
+| `audio_templates` | Enrolled templates: trimmed audio, MFCC + log-mel, cached speech-model embeddings |
+| `training_clips` | Opt-in only: confirmed utterances with their text, for training a personal recogniser |
 | `sign_samples` | ISL sign training samples (254-dimension two-hand landmark features) |
 | `consent_records`, `voices` | Voice-cloning consent and the voices created under it |
 | `turns`, `events` | Conversation history; telemetry (latency, effort, credit usage, consent audit) |
-| `settings` | Selected voice etc. |
+| `settings` | Selected voice, voice profile from the intro, etc. |
+| `users`, `auth_sessions` (core) | Accounts (scrypt password hashes) and login sessions (token hashes only) |
 
 ### ElevenLabs free tier
 The free tier is roughly **10k credits a month** with **2 concurrent requests**, no Instant Voice Cloning, and
@@ -158,5 +196,10 @@ clips through Scribe and the spectrogram matcher, and run live sessions with tea
   (`STT_REUSE_MAX_DIST`) was tuned on synthetic audio. Check both against real speech and your plan.
 * Live (streaming) Scribe is not used: streamed audio cannot be cached or re-used, so it would spend the free-tier
   minutes much faster. Recognition runs when a turn ends.
+* Neon/Postgres support is unit-tested for its SQL translation only; no Postgres server was available here. Run the
+  app once against your Neon `DATABASE_URL` and check the tables appear (`public.users`, `u_1.phrases`, ...).
+* Accounts have no password reset, email verification or login rate limiting yet. Add these before a public launch.
+* The WavLM matcher has not been measured against the spectral features yet (run `eval/run_matching.py` with `--model`),
+  and the intro's word splitting relies on clear pauses; very breathy or continuous speech may need re-recording.
 * Not built yet: seeding the sign classifier from `data/ISL_Dataset` (needs MediaPipe for Python, which is not installed
   in this environment), expressive v3 speech from facial affect, spoken consent, and several patient profiles per device.

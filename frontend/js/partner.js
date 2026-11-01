@@ -4,7 +4,10 @@ import { Recorder } from './audio.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const session = new URLSearchParams(location.search).get('s');
+const params = new URLSearchParams(location.search);
+const session = params.get('s');
+// The signed key from the QR code lets this phone use this one conversation without signing in.
+const auth = `s=${encodeURIComponent(session || '')}&k=${encodeURIComponent(params.get('k') || '')}`;
 const recorder = new Recorder();
 let toastTimer, lastId = 0;
 
@@ -15,7 +18,7 @@ function toast(msg, ms = 3000) {
 
 async function send(fd) {
   fd.append('session_id', session);
-  const res = await fetch('/api/partner', { method: 'POST', body: fd });
+  const res = await fetch(`/api/partner?${auth}`, { method: 'POST', body: fd });
   const r = await res.json();
   if (!res.ok) throw new Error(r.detail || res.statusText);
   if (!r.transcript) toast(r.note || 'Nothing was heard. Try again or type.', 4000);
@@ -62,7 +65,9 @@ $('#typeForm').onsubmit = async (e) => {
 // ---- captions: poll the shared conversation
 async function refresh() {
   try {
-    const turns = await (await fetch(`/api/history/${encodeURIComponent(session)}`)).json();
+    const res = await fetch(`/api/history/${encodeURIComponent(session)}?${auth}`);
+    if (res.status === 401) { $('#lastSaid').textContent = 'This link has expired. Scan the QR code on the patient\'s screen again.'; return; }
+    const turns = await res.json();
     const newest = turns.at(-1)?.id || 0;
     if (newest === lastId) return;
     lastId = newest;

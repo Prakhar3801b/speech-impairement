@@ -13,6 +13,7 @@ async function api(path, opts = {}) {
     delete init.json;
   }
   const res = await fetch(path, init);
+  if (res.status === 401) { location.replace('/login.html'); throw new Error('Please sign in'); }
   const type = res.headers.get('content-type') || '';
   if (!res.ok) {
     const body = type.includes('json') ? await res.json() : { detail: await res.text() };
@@ -41,13 +42,16 @@ function newSessionId() {
   try { localStorage.setItem('ps16.session', id); } catch { /* storage unavailable */ }
   return id;
 }
-// Per-device profile from the first-run setup (language, "yes" signal, voice choice).
+// Per-account profile from the first-run setup (language, "yes" signal, voice choice), kept on this device.
 const profile = { name: '', lang: 'auto', yes: 'thumbs', voice: 'default', done: false };
-try {   // 'saathi.profile' is the key used before the rename to Clio
-  Object.assign(profile, JSON.parse(localStorage.getItem('clio.profile') || localStorage.getItem('saathi.profile') || '{}'));
-} catch { /* storage unavailable */ }
+let profileKey = 'clio.profile';
+function loadProfile(user) {
+  profileKey = `clio.profile.${user.id}`;
+  try { Object.assign(profile, JSON.parse(localStorage.getItem(profileKey) || '{}')); } catch { /* storage unavailable */ }
+  if (!profile.name) profile.name = user.name || '';
+}
 function saveProfile() {
-  try { localStorage.setItem('clio.profile', JSON.stringify(profile)); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(profileKey, JSON.stringify(profile)); } catch { /* storage unavailable */ }
 }
 
 const recorder = new Recorder();
@@ -645,7 +649,9 @@ $('#emergencyDismiss').onclick = () => { $('#emergency').hidden = true; };
 async function openPartnerPhone() {
   const { addresses } = await api('/api/lan').catch(() => ({ addresses: [] }));
   const host = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? addresses[0] : location.hostname;
-  const url = `${location.protocol}//${host || location.hostname}:${location.port || (location.protocol === 'https:' ? 443 : 80)}/partner.html?s=${encodeURIComponent(state.session)}`;
+  const { key } = await api(`/api/partner/link?session_id=${encodeURIComponent(state.session)}`);
+  const url = `${location.protocol}//${host || location.hostname}:${location.port || (location.protocol === 'https:' ? 443 : 80)}`
+    + `/partner.html?s=${encodeURIComponent(state.session)}&k=${encodeURIComponent(key)}`;
   $('#partnerUrl').textContent = url;
   $('#partnerNote').textContent = (!host ? 'No network address found: start the server with --host 0.0.0.0. ' : '')
     + (location.protocol !== 'https:' ? 'Over plain http the phone can show captions and take typed words; its microphone needs https.' : '');
@@ -693,7 +699,7 @@ function applyProfile() {
   if (!state.candidates.length) $('#candidates').innerHTML = `<p class="empty">${emptyHint()}</p>`;
 }
 
-const setup = { step: 0, last: 2 };
+const setup = { step: 0, last: 3 };
 function showStep(n) {
   setup.step = n;
   document.querySelectorAll('#setup .step').forEach((s) => { s.hidden = +s.dataset.step !== n; });
@@ -707,6 +713,7 @@ function openSetup() {
     const r = document.querySelector(`input[name="${name}"][value="${v}"]`); if (r) r.checked = true;
   }
   showStep(0); $('#setup').showModal();
+  loadIntroPrompts();
 }
 async function finishSetup(skipped) {
   const pick = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
@@ -728,11 +735,84 @@ $('#setupBack').onclick = () => showStep(Math.max(0, setup.step - 1));
 $('#setupSkip').onclick = () => finishSetup(true);
 $('#openSetup').onclick = openSetup;
 
+// ------------------------------------------------------------------ guided voice intro (setup step 3)
+// Part 1: free speech about themselves (voice profile + names). Part 2: the prompt words with pauses,
+// split by the server into one template per phrase. Both are recorded here and sent together.
+const intro = { rec: new Recorder(), prompts: [], about: null, words: null, active: null };
+
+async function loadIntroPrompts() {
+  try {
+    const lang = document.querySelector('input[name="sLang"]:checked')?.value === 'hin' ? 'hi' : 'en';
+    const r = await api(`/api/intro/prompts?language=${lang}`);
+    intro.prompts = r.prompts;
+    $('#introWords').innerHTML = r.prompts.map((p) => `<span>${esc(p.say)}</span>`).join('');
+  } catch { /* shown as an empty list; the step can be skipped */ }
+}
+async function toggleIntroRecording(which) {
+  const btn = which === 'about' ? $('#introAbout') : $('#introWordsRec');
+  const note = which === 'about' ? $('#introAboutState') : $('#introWordsState');
+  if (intro.active === which) {          // stop
+    const { blob, seconds } = intro.rec.stop();
+    intro.active = null;
+    btn.setAttribute('aria-pressed', 'false'); btn.lastElementChild.textContent = 'Record again';
+    intro[which] = seconds >= 1 ? blob : null;
+    note.textContent = seconds >= 1 ? `Recorded ${seconds.toFixed(0)} s` : 'Too short, try again';
+    $('#introSave').disabled = !intro.words;
+    return;
+  }
+  if (intro.active) return;              // one recording at a time
+  try {
+    if (!intro.rec.ctx) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      await intro.rec.init(stream);
+    }
+  } catch (e) { toast('Microphone not available: ' + e.message, 5000); return; }
+  intro.rec.start(); intro.active = which;
+  btn.setAttribute('aria-pressed', 'true'); btn.lastElementChild.textContent = 'Stop';
+  note.textContent = 'Listening…';
+}
+$('#introAbout').onclick = () => toggleIntroRecording('about');
+$('#introWordsRec').onclick = () => toggleIntroRecording('words');
+$('#introSave').onclick = async () => {
+  const fd = new FormData();
+  fd.append('words', intro.words, 'words.wav');
+  fd.append('phrase_ids', JSON.stringify(intro.prompts.map((p) => p.phrase_id)));
+  fd.append('language', document.querySelector('input[name="sLang"]:checked')?.value || 'auto');
+  if (intro.about) fd.append('about', intro.about, 'about.wav');
+  $('#introSave').disabled = true; $('#introResult').innerHTML = '<p class="hint">Learning your voice…</p>';
+  try {
+    const r = await api('/api/intro', { method: 'POST', body: fd });
+    const p = r.profile;
+    $('#introResult').innerHTML = `<p><b>Learned ${r.saved.length} words.</b> Clio can recognise them from now on.</p>`
+      + (p ? `<p class="hint">Your voice: ${p.pitch_hz ? `pitch about ${p.pitch_hz} Hz, ` : ''}${p.syllables_per_s ? `${p.syllables_per_s} syllables a second, ` : ''}background noise ${p.snr_db != null ? `${p.snr_db} dB below your voice` : 'unknown'}.</p>` : '')
+      + (r.suggestions.length ? `<p class="hint">Add to your phrases?</p><div class="row wrap">${r.suggestions.map((t) => `<button type="button" class="btn tonal" data-add="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : '');
+    $('#introResult').querySelectorAll('[data-add]').forEach((b) => {
+      b.onclick = async () => {
+        await api('/api/phrases', { json: { text: b.dataset.add, category: 'people' } });
+        b.disabled = true; b.textContent = 'Added: ' + b.dataset.add; loadPhraseCache();
+      };
+    });
+    loadStatus();
+  } catch (e) {
+    $('#introResult').innerHTML = `<p class="hint">${esc(e.message)}</p>`;
+  } finally { $('#introSave').disabled = !intro.words; }
+};
+
+// ------------------------------------------------------------------ account
+$('#signOut').onclick = async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  location.replace('/login.html');
+};
+
 // ------------------------------------------------------------------ boot
-applyProfile();
-startPartnerFeed();   // picks up turns spoken on the partner's phone
-if (!profile.done) openSetup();
 (async () => {
+  let me;
+  try { me = await api('/api/auth/me'); } catch { return; }   // 401 -> login page
+  loadProfile(me.user);
+  $('#accountName').textContent = me.user.name;
+  applyProfile();
+  startPartnerFeed();   // picks up turns spoken on the partner's phone
+  if (!profile.done) openSetup();
   try {
     await Promise.all([loadStatus(), loadPhraseCache(), reloadClassifier()]);
     populateSignLabels();

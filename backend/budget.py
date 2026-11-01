@@ -52,8 +52,7 @@ class KeyPool:
         self.credits_per_key = credits_per_key
         self.reserve = reserve
         with db.lock:
-            db.conn.executescript(SCHEMA)
-            db.conn.commit()
+            db.script(SCHEMA)
 
     def __bool__(self) -> bool:
         return bool(self.keys)

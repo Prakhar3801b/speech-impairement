@@ -35,6 +35,8 @@ class Settings:
     llm_effort: str = os.environ.get("LLM_EFFORT", "low")
     llm_timeout_s: float = float(os.environ.get("LLM_TIMEOUT_S", "4"))
     db_path: str = os.environ.get("DB_PATH", str(ROOT / "data" / "app.db"))
+    # Postgres (e.g. Neon, direct connection string). When set, it replaces the SQLite files.
+    database_url: str = os.environ.get("DATABASE_URL", "")
     # Free-tier budget. Extra keys (comma separated) take over when one runs out.
     elevenlabs_api_keys: str = os.environ.get("ELEVENLABS_API_KEYS", "")
     credits_per_key: float = float(os.environ.get("ELEVENLABS_CREDITS_PER_KEY", "10000"))
@@ -49,6 +51,21 @@ class Settings:
     # A spectrogram template match this confident answers the patient turn without Scribe.
     skip_stt_confidence: float = float(os.environ.get("SKIP_STT_CONFIDENCE", "0.85"))
     max_stt_seconds: float = float(os.environ.get("MAX_STT_SECONDS", "15"))
+    # Phrase matching (backend/matcher.py): auto | ssl | robust | mfcc. auto = best available.
+    matcher: str = os.environ.get("MATCHER", "auto")
+    ssl_model_path: str = os.environ.get("SSL_MODEL_PATH", str(ROOT / "models" / "wavlm-base-plus-l6.int8.onnx"))
+    ssl_center: bool = os.environ.get("SSL_CENTER", "1") == "1"
+    prosody_weight: float = float(os.environ.get("PROSODY_WEIGHT", "0.5"))
+    # Softmax temperature per feature type, calibrated with eval/run_matching.py so that a
+    # confidence >= SKIP_STT_CONFIDENCE is right >= 95% of the time (0.35 was far too flat).
+    match_temperature_mfcc: float = float(os.environ.get("MATCH_TEMPERATURE_MFCC", "0.02"))
+    match_temperature_robust: float = float(os.environ.get("MATCH_TEMPERATURE_ROBUST", "0.02"))
+    match_temperature_ssl: float = float(os.environ.get("MATCH_TEMPERATURE_SSL", "0.02"))
+    prototype_min_templates: int = int(os.environ.get("PROTOTYPE_MIN_TEMPLATES", "5"))
+    prototype_weight: float = float(os.environ.get("PROTOTYPE_WEIGHT", "0.3"))
+    prototype_temperature: float = float(os.environ.get("PROTOTYPE_TEMPERATURE", "0.02"))
+    # Optional personal speech recogniser (fine-tuned Whisper folder); tried before Scribe.
+    local_asr_model: str = os.environ.get("LOCAL_ASR_MODEL", "")
 
     @property
     def api_keys(self) -> list[str]:

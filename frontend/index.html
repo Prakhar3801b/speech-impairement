@@ -23,6 +23,7 @@
     <div class="status" id="status" aria-live="polite"></div>
     <button class="btn text" id="openSetup"><span class="icon" aria-hidden="true">tune</span>Setup</button>
     <button class="btn help" id="helpBtn"><span class="icon" aria-hidden="true">emergency</span>Help</button>
+    <button class="btn text" id="signOut" title="Sign out"><span class="icon" aria-hidden="true">logout</span><span id="accountName">Sign out</span></button>
   </div>
 </header>
 
@@ -293,14 +294,14 @@
   </section>
 </main>
 
-<!-- ============================== FIRST-RUN SETUP (3 steps) -->
+<!-- ============================== FIRST-RUN SETUP (4 steps) -->
 <dialog id="setup" aria-labelledby="setupTitle">
   <form method="dialog" id="setupForm">
-    <div class="steps" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+    <div class="steps" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>
 
     <div class="step" data-step="0">
       <h2 id="setupTitle">Welcome to Clio</h2>
-      <p class="hint">Three quick choices and you're ready to talk. You can change them later under Setup.</p>
+      <p class="hint">Four quick steps and you're ready to talk. You can change them later under Setup.</p>
       <label class="field">What should we call you?
         <input id="sName" placeholder="Your name (optional)" autocomplete="given-name">
       </label>
@@ -324,6 +325,25 @@
     </div>
 
     <div class="step" data-step="2" hidden>
+      <h2>Let Clio learn your voice</h2>
+      <p class="hint">About a minute. Clio learns how <em>you</em> say things, so it does not matter if speech is unclear.</p>
+      <div class="intro-part">
+        <p class="label">1. Tell us about yourself <small>(optional)</small></p>
+        <p class="hint">Your name, who you live with, where you live. Clio learns your voice and suggests phrases with the names you say.</p>
+        <button type="button" class="btn tonal rec" id="introAbout" aria-pressed="false"><span class="icon" aria-hidden="true">mic</span><span>Record</span></button>
+        <span class="hint" id="introAboutState"></span>
+      </div>
+      <div class="intro-part">
+        <p class="label">2. Say each word, with a short pause after each</p>
+        <div class="intro-words" id="introWords"></div>
+        <button type="button" class="btn tonal rec" id="introWordsRec" aria-pressed="false"><span class="icon" aria-hidden="true">mic</span><span>Record</span></button>
+        <span class="hint" id="introWordsState"></span>
+      </div>
+      <div class="row wrap"><button type="button" class="btn filled" id="introSave" disabled>Save my voice</button></div>
+      <div id="introResult" class="intro-result" aria-live="polite"></div>
+    </div>
+
+    <div class="step" data-step="3" hidden>
       <h2>Choose a voice</h2>
       <p class="hint">This is the voice Clio speaks with.</p>
       <div class="tiles" role="radiogroup" aria-label="Voice">

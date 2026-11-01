@@ -261,3 +261,12 @@ dialog#partnerDialog::backdrop { background: rgba(25, 28, 28, .32); }
 
 /* auto-scan: make the moving highlight easy to follow */
 .candidates.scanning .cand.selected { box-shadow: 0 0 0 4px var(--accent-container); }
+
+/* ---- guided voice intro (setup step 3) */
+.intro-part { margin-top: 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.intro-part > p { flex-basis: 100%; margin: 0; }
+.intro-words { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .4rem; }
+.intro-words span { padding: .45rem .9rem; border-radius: 999px; background: var(--surface-2, #eef1f6); font-size: 1.1rem; font-weight: 500; }
+.btn.rec[aria-pressed="true"] { background: #b3261e; color: #fff; }
+.intro-result { margin-top: .75rem; display: flex; flex-direction: column; gap: .5rem; }
+.intro-result .row { margin-top: 0; }

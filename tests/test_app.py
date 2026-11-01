@@ -86,7 +86,14 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.config.Settings.llm_enabled", property(lambda self: False))
     app = create_app(db_path=str(tmp_path / "api.db"), elevenlabs_key="")
     with TestClient(app) as c:
+        sign_up(c)
         yield c
+
+
+def sign_up(c, email="carer@example.com"):
+    r = c.post("/api/auth/signup", json={"email": email, "password": "long-enough-1", "name": "Ravi"})
+    assert r.status_code == 200, r.text
+    return r.json()["user"]
 
 
 def test_status_and_seeded_phrases(client):
@@ -220,6 +227,7 @@ def test_patient_turn_skips_scribe_when_template_match_is_clear(tmp_path, monkey
     app = create_app(db_path=str(tmp_path / "api.db"), elevenlabs_key="key-one")
     calls = fake_elevenlabs(app.state.el, lambda i, req: httpx.Response(200, json={"text": "x", "words": []}))
     with TestClient(app) as c:
+        sign_up(c)
         water = next(p for p in c.get("/api/phrases").json() if p["text"] == "I want water")
         c.post("/api/templates", data={"phrase_id": water["id"]}, files={"audio": ("a.wav", word(WORDS[1]), "audio/wav")})
         r = c.post("/api/patient", data={"session_id": "s3"},
@@ -292,3 +300,88 @@ def test_run_wer_reads_torgo_layout_and_measures_scribe(tmp_path):
     assert [p for _, p in calls].count("/v1/speech-to-text") == 2        # near-identical clips are not re-used
     assert next(r for r in rows if r["speaker"] == "F01")["wer"] == pytest.approx(1 / 3, abs=1e-4)
     assert "REAL data" in run_wer.report(rows)
+
+
+# ---------------------------------------------------------------- accounts
+def test_api_needs_login_and_accounts_are_separate(tmp_path, monkeypatch):
+    monkeypatch.setattr("backend.config.Settings.llm_enabled", property(lambda self: False))
+    app = create_app(db_path=str(tmp_path / "core.db"), elevenlabs_key="")
+    with TestClient(app) as a, TestClient(app) as b:
+        assert a.get("/api/phrases").status_code == 401
+        assert a.post("/api/auth/login", json={"email": "x@example.com", "password": "nope-nope"}).status_code == 400
+        sign_up(a, "a@example.com")
+        sign_up(b, "b@example.com")
+        assert b.post("/api/auth/signup", json={"email": "a@example.com", "password": "long-enough-1",
+                                                 "name": "Dup"}).status_code == 400
+        a.post("/api/phrases", json={"text": "Call Amit"})
+        assert any(p["text"] == "Call Amit" for p in a.get("/api/phrases").json())
+        assert not any(p["text"] == "Call Amit" for p in b.get("/api/phrases").json())
+        a.post("/api/auth/logout")
+        assert a.get("/api/phrases").status_code == 401
+        assert a.post("/api/auth/login", json={"email": "A@example.com", "password": "long-enough-1"}).status_code == 200
+
+
+def test_partner_link_covers_one_conversation(tmp_path, monkeypatch):
+    monkeypatch.setattr("backend.config.Settings.llm_enabled", property(lambda self: False))
+    app = create_app(db_path=str(tmp_path / "core.db"), elevenlabs_key="")
+    with TestClient(app) as laptop, TestClient(app) as phone:
+        sign_up(laptop)
+        key = laptop.get("/api/partner/link", params={"session_id": "s1"}).json()["key"]
+        assert phone.get("/api/history/s1").status_code == 401
+        r = phone.post("/api/partner", params={"s": "s1", "k": key}, data={"session_id": "s1", "text": "Paani chahiye?"})
+        assert r.status_code == 200 and r.json()["question"]["type"] == "yes_no"
+        assert phone.get("/api/history/s1", params={"s": "s1", "k": key}).json()[0]["text"] == "Paani chahiye?"
+        assert phone.post("/api/partner", params={"s": "s1", "k": key},
+                          data={"session_id": "other", "text": "hi"}).status_code == 403
+        assert phone.get("/api/history/s2", params={"s": "s2", "k": key}).status_code == 401
+        assert phone.get("/api/phrases", params={"s": "s1", "k": key}).status_code == 401
+
+
+def test_sqlite_statements_translate_to_postgres():
+    from backend.db import _schema_to_pg, _to_pg
+    sql, rid = _to_pg("INSERT INTO turns(session_id, speaker) VALUES(?,?)")
+    assert sql.endswith("VALUES(%s,%s) RETURNING id") and rid
+    sql, rid = _to_pg("INSERT OR REPLACE INTO voices(voice_id, name, kind) VALUES(?,?,?)")
+    assert "ON CONFLICT (voice_id) DO UPDATE SET name=EXCLUDED.name, kind=EXCLUDED.kind" in sql and not rid
+    assert _to_pg("INSERT OR IGNORE INTO key_usage(key_id, month) VALUES(?, ?)")[0].endswith("ON CONFLICT DO NOTHING")
+    assert "LIKE '%%a'" in _to_pg("SELECT 1 WHERE x LIKE '%a'")[0]
+    ddl = _schema_to_pg("id INTEGER PRIMARY KEY AUTOINCREMENT, a BLOB, b REAL")
+    assert ddl == "id BIGSERIAL PRIMARY KEY, a BYTEA, b DOUBLE PRECISION"
+
+
+# ---------------------------------------------------------------- guided intro
+def words_with_pauses(freq_lists, gap=0.5, sr=16000):
+    parts = []
+    for i, f in enumerate(freq_lists):
+        x, _ = dsp.read_wav(word(f, seed=40 + i, noise=0.002))
+        parts += [x, np.zeros(int(gap * sr), np.float32)]
+    return dsp.write_wav(np.concatenate(parts), sr)
+
+
+def test_intro_splits_words_into_templates_and_profiles_voice(client):
+    prompts = client.get("/api/intro/prompts").json()["prompts"]
+    assert [p["say"] for p in prompts][:3] == ["Yes", "No", "Water"]
+    use = prompts[:4]
+    about = word([220, 240, 230, 250, 210], seg=0.3)   # a voiced, pitched "sentence"
+    r = client.post("/api/intro", data={"phrase_ids": json.dumps([p["phrase_id"] for p in use])},
+                    files={"words": ("w.wav", words_with_pauses(list(WORDS.values())), "audio/wav"),
+                           "about": ("a.wav", about, "audio/wav")})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert [s["phrase_id"] for s in out["saved"]] == [p["phrase_id"] for p in use]
+    assert out["profile"]["pitch_hz"] and 150 < out["profile"]["pitch_hz"] < 300
+    assert client.get("/api/status").json()["matcher"] in ("robust", "ssl")
+    # a later, slower "Water" is recognised from the intro alone
+    q = client.post("/api/patient", data={"session_id": "i1", "use_llm": "false"},
+                    files={"audio": ("q.wav", word(WORDS[3], stretch=1.4, seed=77), "audio/wav")}).json()
+    assert q["spectrogram_matches"][0]["phrase_id"] == use[2]["phrase_id"]
+    # too few words heard -> clear error, nothing saved
+    bad = client.post("/api/intro", data={"phrase_ids": json.dumps([p["phrase_id"] for p in prompts])},
+                      files={"words": ("w.wav", words_with_pauses(list(WORDS.values())[:2]), "audio/wav")})
+    assert bad.status_code == 422
+
+
+def test_intro_name_suggestions():
+    from backend import intro
+    assert intro.suggestions("My name is Ravi. My son Amit lives in Pune.", ["Yes"]) == \
+        ["Please call Ravi", "Please call Amit", "Please call Pune"]

@@ -3,8 +3,12 @@
 Pipeline:  WAV -> 16 kHz mono -> pre-emphasis -> 25 ms Hamming frames (10 ms hop)
            -> |FFT|^2 -> 40-band mel filterbank -> log  (= log-mel spectrogram)
            -> DCT -> 13 MFCC + deltas -> per-utterance mean/variance normalisation
+Robust:    the same frames -> noise floor subtracted per frequency bin -> mel -> power-law
+           compression (PNCC-style, x^(1/15) instead of log) -> DCT + deltas -> CMVN,
+           plus a prosody track (energy, voicing, pitch) for the rhythm of the phrase.
 Matching:  dynamic time warping (DTW) against the patient's own enrolled recordings.
            DTW absorbs the slow / irregular timing typical of dysarthric speech.
+           backend/matcher.py chooses the features (these, or self-supervised speech embeddings).
 
 Pure numpy, so it runs anywhere and costs no API credits.
 """
@@ -144,17 +148,81 @@ def mfcc_from_logmel(lm: np.ndarray) -> np.ndarray:
     return feats.astype(np.float32)
 
 
+# ---------------------------------------------------------------- noise-robust features
+def power_spectrum(x: np.ndarray) -> np.ndarray:
+    """|FFT|^2 of pre-emphasised, windowed frames, shape [frames, N_FFT/2+1]."""
+    x = np.append(x[0], x[1:] - 0.97 * x[:-1]) if len(x) > 1 else x
+    return np.abs(np.fft.rfft(frames(x), n=N_FFT)) ** 2
+
+
+def denoise_power(p: np.ndarray, over: float = 2.0, floor: float = 0.05) -> np.ndarray:
+    """Spectral subtraction. The noise floor of each frequency bin is its 10th-percentile power
+    over the clip (steady fans, AC hum, hospital equipment); speech rarely sits in one bin that long."""
+    if len(p) < 5:
+        return p
+    noise = np.percentile(p, 10, axis=0)
+    return np.maximum(p - over * noise, floor * p)
+
+
+def robust_cepstra(x: np.ndarray) -> np.ndarray:
+    """PNCC-style cepstra: denoised mel power, normalised by the clip's mean power, then
+    power-law compressed. x^(1/15) does not blow up near-silent bands the way log does."""
+    mel = denoise_power(power_spectrum(x)) @ _FB.T
+    mel = mel / (mel.mean() + 1e-10)
+    c = (mel ** (1 / 15)) @ _DCT.T
+    feats = np.hstack([c, _deltas(c)])
+    return ((feats - feats.mean(axis=0)) / (feats.std(axis=0) + 1e-6)).astype(np.float32)
+
+
+def pitch_track(x: np.ndarray, fmin: float = 60.0, fmax: float = 400.0) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame (pitch in Hz, voicing strength 0..1) from the normalised autocorrelation peak."""
+    fr = frames(x)
+    ac = np.fft.irfft(np.abs(np.fft.rfft(fr, n=2 * N_FFT)) ** 2)[:, :WIN]
+    ac = ac / (ac[:, :1] + 1e-10)
+    lo, hi = int(SR / fmax), min(int(SR / fmin), WIN - 1)
+    lag = lo + np.argmax(ac[:, lo:hi], axis=1)
+    return SR / lag, ac[np.arange(len(ac)), lag]
+
+
+def prosody(x: np.ndarray) -> np.ndarray:
+    """Per-frame [log energy, voicing strength, log pitch], each normalised over the clip.
+    Unvoiced frames get the clip's mean pitch."""
+    energy = np.log(np.mean(frames(x) ** 2, axis=1) + 1e-10)
+    f0, voicing = pitch_track(x)
+    voiced = voicing > 0.45
+    logf0 = np.log(f0)
+    logf0 = np.where(voiced, logf0, logf0[voiced].mean() if voiced.any() else 0.0)
+    feats = np.stack([energy, voicing, logf0], axis=1)
+    return ((feats - feats.mean(axis=0)) / (feats.std(axis=0) + 1e-6)).astype(np.float32)
+
+
 @dataclass
 class Features:
-    mfcc: np.ndarray     # [frames, 2*N_MFCC]
-    logmel: np.ndarray   # [frames, N_MELS]
+    mfcc: np.ndarray                    # [frames, 2*N_MFCC]
+    logmel: np.ndarray                  # [frames, N_MELS]
+    robust: np.ndarray | None = None    # [frames, 2*N_MFCC] PNCC-style cepstra
+    prosody: np.ndarray | None = None   # [frames, 3]
+    audio: np.ndarray | None = None     # trimmed 16 kHz signal (for embeddings and stored templates)
 
 
 def extract(wav_bytes: bytes) -> Features:
     x, sr = read_wav(wav_bytes)
-    x = trim_silence(resample(x, sr))
+    return extract_signal(trim_silence(resample(x, sr)))
+
+
+def extract_signal(x: np.ndarray) -> Features:
+    """Features of an already resampled (16 kHz) and trimmed signal."""
     lm = logmel(x)
-    return Features(mfcc=mfcc_from_logmel(lm), logmel=lm)
+    return Features(mfcc=mfcc_from_logmel(lm), logmel=lm, robust=robust_cepstra(x), prosody=prosody(x),
+                    audio=x.astype(np.float32))
+
+
+def pcm16(x: np.ndarray) -> bytes:
+    return (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()
+
+
+def from_pcm16(b: bytes) -> np.ndarray:
+    return np.frombuffer(b, dtype="<i2").astype(np.float32) / 32768.0
 
 
 def spectrogram_preview(lm: np.ndarray, max_frames: int = 120) -> list[list[float]]:
@@ -175,7 +243,7 @@ def _pool(x: np.ndarray, k: int = 2) -> np.ndarray:
     return x[: n * k].reshape(n, k, -1).mean(axis=1) if n >= 4 else x
 
 
-def dtw_distance(query: np.ndarray, template: np.ndarray) -> float:
+def dtw_distance(query: np.ndarray, template: np.ndarray, pool: int = 2) -> float:
     """DTW cost normalised by query length.
 
     Step pattern: each query frame advances the template by 0, 1 or 2 frames
@@ -183,7 +251,7 @@ def dtw_distance(query: np.ndarray, template: np.ndarray) -> float:
     previous row, so the recursion is vectorised with numpy. Slope 0 lets a slow
     (dysarthric) query stretch over a template; slope 2 allows up to 2x faster.
     """
-    a, b = _pool(query), _pool(template)
+    a, b = (_pool(query, pool), _pool(template, pool)) if pool > 1 else (query, template)
     n, m = len(a), len(b)
     if n == 0 or m == 0:
         return float("inf")
@@ -204,18 +272,18 @@ def dtw_distance(query: np.ndarray, template: np.ndarray) -> float:
     return float(end / n)
 
 
-def match(query: np.ndarray, templates: list[tuple[int, np.ndarray]], top_k: int = 5,
-          temperature: float = 0.35) -> list[dict]:
-    """Return the closest phrases. `templates` is a list of (phrase_id, mfcc).
-
-    The best (minimum) distance per phrase is kept, then converted to a
-    confidence with a softmax over negative distances.
-    """
+def best_distances(query: np.ndarray, templates: list[tuple[int, np.ndarray]], pool: int = 2) -> dict[int, float]:
+    """Minimum DTW distance per phrase."""
     best: dict[int, float] = {}
     for pid, tmpl in templates:
-        dist = dtw_distance(query, tmpl)
+        dist = dtw_distance(query, tmpl, pool)
         if dist < best.get(pid, float("inf")):
             best[pid] = dist
+    return best
+
+
+def to_confidence(best: dict[int, float], top_k: int = 5, temperature: float = 0.35) -> list[dict]:
+    """Softmax over negative distances, relative to the best one (scale-free across feature types)."""
     best = {k: v for k, v in best.items() if np.isfinite(v)}
     if not best:
         return []
@@ -226,3 +294,14 @@ def match(query: np.ndarray, templates: list[tuple[int, np.ndarray]], top_k: int
     order = np.argsort(dists)[:top_k]
     return [{"phrase_id": ids[i], "distance": round(float(dists[i]), 4),
              "confidence": round(float(probs[i]), 4)} for i in order]
+
+
+def match(query: np.ndarray, templates: list[tuple[int, np.ndarray]], top_k: int = 5,
+          temperature: float = 0.35) -> list[dict]:
+    """Return the closest phrases. `templates` is a list of (phrase_id, features).
+
+    The best (minimum) distance per phrase is kept, then converted to a
+    confidence with a softmax over negative distances.
+    """
+    return to_confidence(best_distances(query, templates), top_k, temperature)
+

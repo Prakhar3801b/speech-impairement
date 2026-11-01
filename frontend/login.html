@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clio Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+    .auth { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 1rem; }
+    .auth .brand { justify-content: center; }
+    .auth .card { display: flex; flex-direction: column; gap: .9rem; padding: 1.5rem; }
+    .auth .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface-2, #eef1f6); border-radius: 999px; padding: 4px; }
+    .auth .seg button { border: 0; background: none; border-radius: 999px; padding: .55rem; font: inherit; font-weight: 500; color: var(--muted); cursor: pointer; }
+    .auth .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--elev-1); }
+    .auth .error { color: #b3261e; font-size: .875rem; min-height: 1.2em; margin: 0; }
+    .auth .btn.filled { width: 100%; justify-content: center; }
+  </style>
+</head>
+<body>
+<main class="auth">
+  <div class="brand">
+    <span class="logo icon" aria-hidden="true">graphic_eq</span>
+    <div><h1>Clio</h1><p class="sub">Conversation assistant</p></div>
+  </div>
+  <form class="card" id="authForm" novalidate>
+    <div class="seg" role="group" aria-label="Sign in or create account">
+      <button type="button" id="modeLogin" aria-pressed="true">Sign in</button>
+      <button type="button" id="modeSignup" aria-pressed="false">Create account</button>
+    </div>
+    <label class="field" id="nameField" hidden>Patient's name
+      <input id="name" autocomplete="name" placeholder="e.g. Ramesh">
+    </label>
+    <label class="field">Email
+      <input id="email" type="email" autocomplete="email" required>
+    </label>
+    <label class="field">Password
+      <input id="password" type="password" autocomplete="current-password" minlength="8" required>
+    </label>
+    <p class="hint" id="pwHint" hidden>At least 8 characters. A caregiver can set this up for the patient.</p>
+    <p class="error" id="error" role="alert"></p>
+    <button class="btn filled" id="submit">Sign in</button>
+  </form>
+  <p class="hint" style="text-align:center">Each account keeps its own phrases, voice recordings and history.</p>
+</main>
+<script>
+  const $ = (s) => document.querySelector(s);
+  let mode = 'login';
+  function setMode(m) {
+    mode = m;
+    $('#modeLogin').setAttribute('aria-pressed', m === 'login');
+    $('#modeSignup').setAttribute('aria-pressed', m === 'signup');
+    $('#nameField').hidden = $('#pwHint').hidden = m !== 'signup';
+    $('#password').autocomplete = m === 'signup' ? 'new-password' : 'current-password';
+    $('#submit').textContent = m === 'signup' ? 'Create account' : 'Sign in';
+    $('#error').textContent = '';
+  }
+  $('#modeLogin').onclick = () => setMode('login');
+  $('#modeSignup').onclick = () => setMode('signup');
+  $('#authForm').onsubmit = async (e) => {
+    e.preventDefault();
+    $('#error').textContent = '';
+    const body = { email: $('#email').value.trim(), password: $('#password').value };
+    if (mode === 'signup') body.name = $('#name').value.trim() || body.email.split('@')[0];
+    $('#submit').disabled = true;
+    try {
+      const res = await fetch(`/api/auth/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await res.json();
+      if (!res.ok) throw new Error(typeof r.detail === 'string' ? r.detail : 'Please check the form.');
+      location.replace('/');
+    } catch (err) { $('#error').textContent = err.message; }
+    finally { $('#submit').disabled = false; }
+  };
+  fetch('/api/auth/me').then((r) => { if (r.ok) location.replace('/'); });
+</script>
+</body>
+</html>

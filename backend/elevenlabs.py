@@ -69,15 +69,25 @@ def _quota_error(e: ElevenLabsError) -> bool:
 
 
 class ElevenLabs:
-    def __init__(self, db: Database, api_key: str | None = None):
-        self.db = db
+    def __init__(self, db: Database, api_key: str | None = None, pool: KeyPool | None = None):
+        """`db` holds this account's caches; `pool` (the API keys and their budgets) can be shared."""
         keys = settings.api_keys if api_key is None else [k for k in api_key.split(",") if k.strip()]
-        self.pool = KeyPool(db, keys, settings.credits_per_key, settings.credit_reserve)
+        self.pool = pool or KeyPool(db, keys, settings.credits_per_key, settings.credit_reserve)
         self.sem = asyncio.Semaphore(max(1, settings.elevenlabs_concurrency))
         self._clients: dict[str, httpx.AsyncClient] = {}
+        self._open_caches(db)
+
+    def for_account(self, db: Database) -> "ElevenLabs":
+        """A client for one account: its own transcript/speech caches, shared keys, budget and HTTP clients."""
+        el = object.__new__(ElevenLabs)
+        el.pool, el.sem, el._clients = self.pool, self.sem, self._clients
+        el._open_caches(db)
+        return el
+
+    def _open_caches(self, db: Database) -> None:
+        self.db = db
         with db.lock:
-            db.conn.executescript(FINGERPRINT_SCHEMA)
-            db.conn.commit()
+            db.script(FINGERPRINT_SCHEMA)
         self._prints: dict[str, list[dict]] = {}
         for r in db.query("SELECT * FROM stt_fingerprints ORDER BY created_at DESC LIMIT ?", (MAX_FINGERPRINTS * 3,)):
             r["mfcc"] = np.frombuffer(r["mfcc"], dtype=np.float32).reshape(r["n_frames"], r["n_mfcc"])
